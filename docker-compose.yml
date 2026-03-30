@@ -1,0 +1,175 @@
+# docker-compose.yml
+# Environnement de developpement local pour une architecture IA multi-agents.
+# Services inclus:
+# - postgres: base relationnelle
+# - qdrant: base vectorielle locale pour RAG
+# - backend: API FastAPI (avec reload a chaud)
+# - frontend: Next.js (hot reload)
+# - pgadmin: interface web d'administration PostgreSQL
+
+services:
+  # Base de donnees PostgreSQL (donnees transactionnelles)
+  postgres:
+    image: postgres:16-alpine
+    container_name: local_postgres
+    restart: unless-stopped
+    # Variables chargees depuis .env (aucun secret en dur)
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # Expose PostgreSQL sur la machine hote
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    # Volume nomme pour persister les donnees
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Healthcheck pour permettre aux autres services d'attendre PostgreSQL
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    # Reseau interne partage
+    networks:
+      - app_net
+
+  # Base vectorielle Qdrant (embeddings / similarite semantique)
+  qdrant:
+    image: qdrant/qdrant:v1.13.0
+    container_name: local_qdrant
+    restart: unless-stopped
+    # Ports HTTP et gRPC exposes localement
+    ports:
+      - "${QDRANT_HTTP_PORT}:6333"
+      - "${QDRANT_GRPC_PORT}:6334"
+    # Stockage persistant Qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    # Probe TCP compatible avec l'image qdrant (wget/curl absents selon les tags)
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    # Reseau interne partage
+    networks:
+      - app_net
+
+  # API FastAPI (logique LangGraph/IA)
+  backend:
+    image: python:3.12-slim
+    container_name: local_backend
+    restart: unless-stopped
+    # Repertoire de travail dans le conteneur
+    working_dir: /app
+    # Installation des dependances et lancement en mode dev avec auto-reload
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt
+      && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    # Montage du code local pour live-reloading
+    volumes:
+      - ./backend:/app
+    # Charge les variables d'environnement depuis .env
+    env_file:
+      - .env
+    # Variables explicites utiles a l'application
+    environment:
+      APP_ENV: ${APP_ENV}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      QDRANT_URL: http://qdrant:6333
+      PYTHONUNBUFFERED: "1"
+    # Le backend attend PostgreSQL et Qdrant prets (healthy)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    # Exposition de l'API FastAPI en local
+    ports:
+      - "${BACKEND_PORT}:8000"
+    # Healthcheck applicatif (necessite idealement une route /health)
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    # Reseau interne partage
+    networks:
+      - app_net
+
+  # Frontend Next.js pour l'interface utilisateur
+  frontend:
+    image: node:20-alpine
+    container_name: local_frontend
+    restart: unless-stopped
+    # Repertoire de travail dans le conteneur
+    working_dir: /app
+    # Installation deps JS puis lancement serveur de dev Next.js
+    command: >
+      sh -c "npm ci
+      && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    # Live-reload: code source monte + node_modules isole dans un volume Docker
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    # Charge les variables d'environnement depuis .env
+    env_file:
+      - .env
+    # Variables runtime frontend
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT}
+    # Optionnel: attend que le backend soit healthy
+    depends_on:
+      backend:
+        condition: service_healthy
+    # Port expose pour acces navigateur
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    # Reseau interne partage
+    networks:
+      - app_net
+
+  # Interface d'administration PostgreSQL dans le navigateur
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: local_pgadmin
+    restart: unless-stopped
+    # Charge les identifiants depuis .env
+    env_file:
+      - .env
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    # pgAdmin demarre apres PostgreSQL healthy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Port HTTP pgAdmin
+    ports:
+      - "${PGADMIN_PORT}:80"
+    # Persistance des preferences/connexions pgAdmin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    # Reseau interne partage
+    networks:
+      - app_net
+
+# Reseau prive unique pour la communication interne entre services
+networks:
+  app_net:
+    name: local_ai_network
+    driver: bridge
+
+# Volumes nommes (persistance des donnees)
+volumes:
+  postgres_data:
+  qdrant_data:
+  pgadmin_data:
+  frontend_node_modules:
