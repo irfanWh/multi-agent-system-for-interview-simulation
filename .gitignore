@@ -1,4 +1,56 @@
-# Local environment files
+# =============================================================================
+# .gitignore — InterviewAI Multi-Agent System
+# =============================================================================
+
+# --- Environment ---
 .env
 .env.*
 !.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# --- Node.js ---
+node_modules/
+.next/
+out/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Docker ---
+docker-compose.override.yml
+
+# --- Model weights (large files) ---
+models/whisper/*.bin
+models/whisper/*.pt
+models/whisper/snapshots/
+models/tts/*.pth
+models/tts/*.pth.tar
+models/tts/tts_models/
+
+# --- Misc ---
+*.log
+*.pid
+celerybeat-schedule
+celerybeat-schedule.db

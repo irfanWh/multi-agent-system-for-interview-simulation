@@ -1,175 +1,531 @@
+# =============================================================================
 # docker-compose.yml
-# Environnement de developpement local pour une architecture IA multi-agents.
-# Services inclus:
-# - postgres: base relationnelle
-# - qdrant: base vectorielle locale pour RAG
-# - backend: API FastAPI (avec reload a chaud)
-# - frontend: Next.js (hot reload)
-# - pgadmin: interface web d'administration PostgreSQL
+# Environnement de developpement local — InterviewAI Multi-Agent System
+#
+# Services inclus :
+#   Infrastructure de base (conserves de la version initiale) :
+#     - postgres      : base relationnelle (sessions, profils, evaluations)
+#     - qdrant        : base vectorielle (RAG questions bank + memoires candidat)
+#     - pgadmin       : interface web d'administration PostgreSQL
+#
+#   Nouveaux services ajoutes pour le projet :
+#     - redis         : cache + broker de taches async (Celery)
+#     - minio         : stockage objets S3-compatible (audio sessions, rapports PDF)
+#     - celery-worker : taches longues (generation PDF, fine-tuning declenche)
+#     - celery-beat   : planificateur de taches periodiques
+#     - flower        : dashboard de monitoring Celery
+#     - whisper       : service STT (Speech-to-Text) via Faster-Whisper
+#     - tts           : service TTS (Text-to-Speech) via Coqui XTTS-v2
+#     - backend       : API FastAPI (LangGraph + WebSockets audio)
+#     - frontend      : Next.js 14 App Router
+#
+# Prerequis :
+#   - Copier .env.example -> .env et remplir les variables
+#   - Dossiers locaux a creer : ./backend ./frontend ./models/whisper ./models/tts
+# =============================================================================
 
 services:
-  # Base de donnees PostgreSQL (donnees transactionnelles)
+
+  # ===========================================================================
+  # INFRASTRUCTURE — DONNEES
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 — base relationnelle principale
+  # Tables : users, candidate_profiles, sessions, exchanges, evaluations, reports
+  # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: local_postgres
     restart: unless-stopped
-    # Variables chargees depuis .env (aucun secret en dur)
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    # Expose PostgreSQL sur la machine hote
     ports:
       - "${POSTGRES_PORT}:5432"
-    # Volume nomme pour persister les donnees
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Healthcheck pour permettre aux autres services d'attendre PostgreSQL
+      # Script d'initialisation execute au premier demarrage
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
-    # Reseau interne partage
     networks:
       - app_net
 
-  # Base vectorielle Qdrant (embeddings / similarite semantique)
+  # ---------------------------------------------------------------------------
+  # Qdrant v1.13.0 — base vectorielle pour RAG
+  # Collections : questions_bank, candidate_memories
+  # ---------------------------------------------------------------------------
   qdrant:
     image: qdrant/qdrant:v1.13.0
     container_name: local_qdrant
     restart: unless-stopped
-    # Ports HTTP et gRPC exposes localement
     ports:
       - "${QDRANT_HTTP_PORT}:6333"
       - "${QDRANT_GRPC_PORT}:6334"
-    # Stockage persistant Qdrant
     volumes:
       - qdrant_data:/qdrant/storage
-    # Probe TCP compatible avec l'image qdrant (wget/curl absents selon les tags)
     healthcheck:
       test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/6333'"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
-    # Reseau interne partage
     networks:
       - app_net
 
-  # API FastAPI (logique LangGraph/IA)
+  # ---------------------------------------------------------------------------
+  # Redis 7 — cache applicatif + broker Celery
+  # Usages :
+  #   - Rate-limiting des appels API LLM (Anthropic, OpenAI)
+  #   - File d'attente des taches asynchrones Celery
+  #   - Cache des sessions WebSocket actives
+  #   - Cache des embeddings recemment calcules
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: local_redis
+    restart: unless-stopped
+    # Persistance RDB toutes les 60s si au moins 1 cle a change
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory ${REDIS_MAX_MEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - app_net
+
+  # ---------------------------------------------------------------------------
+  # MinIO — stockage objets S3-compatible (self-hosted)
+  # Buckets :
+  #   - interview-audio  : enregistrements audio des sessions (chunks WAV/WebM)
+  #   - interview-reports: rapports PDF generes par l'agent Report Generator
+  #   - model-artifacts  : checkpoints de fine-tuning exportes
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: local_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT}:9000"    # API S3
+      - "${MINIO_CONSOLE_PORT}:9001" # Console web
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - app_net
+
+  # Helper one-shot : cree les buckets MinIO au premier demarrage
+  minio-init:
+    image: minio/mc:latest
+    container_name: local_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+        mc mb --ignore-existing local/interview-audio &&
+        mc mb --ignore-existing local/interview-reports &&
+        mc mb --ignore-existing local/model-artifacts &&
+        mc anonymous set download local/interview-reports &&
+        echo 'MinIO buckets ready.'
+      "
+    networks:
+      - app_net
+
+  # ===========================================================================
+  # PIPELINE AUDIO — STT / TTS
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Whisper STT — Speech-to-Text via Faster-Whisper (CTranslate2)
+  # Modele : large-v3 (CPU) ou medium.en pour machines contraintes
+  # Le volume ./models/whisper permet de ne pas re-telecharger le modele
+  # API REST exposee sur /transcribe (compatible OpenAI Whisper API format)
+  # ---------------------------------------------------------------------------
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: local_whisper
+    restart: unless-stopped
+    environment:
+      WHISPER__MODEL:   ${WHISPER_MODEL:-large-v3}
+      WHISPER__DEVICE:  cpu
+      WHISPER__COMPUTE_TYPE: int8   # Quantisation INT8 pour CPU — bon compromis vitesse/qualite
+      # Langue par defaut (peut etre overridee par requete)
+      WHISPER__LANGUAGE: ${WHISPER_LANGUAGE:-fr}
+    ports:
+      - "${WHISPER_PORT}:8000"
+    volumes:
+      # Cache des modeles Whisper telecharges (evite re-telechargement)
+      - ./models/whisper:/root/.cache/huggingface/hub
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s    # Le chargement du modele prend du temps
+    networks:
+      - app_net
+
+  # ---------------------------------------------------------------------------
+  # Coqui TTS — Text-to-Speech via XTTS-v2
+  # Modele : tts_models/multilingual/multi-dataset/xtts_v2
+  # Voix : synthese multilingue (FR/EN/AR), clonage possible depuis sample audio
+  # API REST : POST /api/tts -> stream audio WAV
+  # Note : premier demarrage lent (telechargement modele ~2 Go)
+  # ---------------------------------------------------------------------------
+  tts:
+    image: ghcr.io/coqui-ai/tts-cpu:latest
+    container_name: local_tts
+    restart: unless-stopped
+    entrypoint: >
+      python3 TTS/server/server.py
+        --model_name tts_models/multilingual/multi-dataset/xtts_v2
+        --port 5002
+        --use_cuda false
+    ports:
+      - "${TTS_PORT}:5002"
+    volumes:
+      # Cache des modeles TTS (evite re-telechargement du modele ~2 Go)
+      - ./models/tts:/root/.local/share/tts
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5002/api/tts?text=test&language_id=fr || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 8
+      start_period: 120s   # XTTS-v2 prend ~90s pour se charger
+    networks:
+      - app_net
+
+  # ===========================================================================
+  # APPLICATION — BACKEND
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # FastAPI Backend — coeur du systeme multi-agents
+  # Contient : LangGraph agents, WebSocket audio, REST API, Alembic migrations
+  # Hot-reload active en dev via --reload uvicorn
+  # ---------------------------------------------------------------------------
   backend:
     image: python:3.12-slim
     container_name: local_backend
     restart: unless-stopped
-    # Repertoire de travail dans le conteneur
     working_dir: /app
-    # Installation des dependances et lancement en mode dev avec auto-reload
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt
-      && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
-    # Montage du code local pour live-reloading
+      && alembic upgrade head
+      && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --ws websockets"
     volumes:
       - ./backend:/app
-    # Charge les variables d'environnement depuis .env
+      # Volume partage avec celery-worker pour les fichiers temporaires
+      - shared_tmp:/tmp/interviewai
     env_file:
       - .env
-    # Variables explicites utiles a l'application
     environment:
-      APP_ENV: ${APP_ENV}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      QDRANT_URL: http://qdrant:6333
+      APP_ENV:      ${APP_ENV:-development}
       PYTHONUNBUFFERED: "1"
-    # Le backend attend PostgreSQL et Qdrant prets (healthy)
+
+      # Base de donnees
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
+      # Services IA
+      QDRANT_URL:   http://qdrant:6333
+      WHISPER_URL:  http://whisper:8000
+      TTS_URL:      http://tts:5002
+
+      # Cache et files
+      REDIS_URL:    redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL:  redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
+
+      # Stockage objets
+      MINIO_ENDPOINT:   minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_AUDIO:   interview-audio
+      MINIO_BUCKET_REPORTS: interview-reports
+
+      # LLM APIs
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_API_KEY:    ${GROQ_API_KEY}
+
+      # Observabilite LangSmith
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_API_KEY:    ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT:    ${LANGCHAIN_PROJECT:-interviewai-dev}
+
     depends_on:
       postgres:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-    # Exposition de l'API FastAPI en local
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      whisper:
+        condition: service_healthy
+      tts:
+        condition: service_healthy
     ports:
       - "${BACKEND_PORT}:8000"
-    # Healthcheck applicatif (necessite idealement une route /health)
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
       interval: 10s
       timeout: 5s
       retries: 15
-      start_period: 20s
-    # Reseau interne partage
+      start_period: 30s
     networks:
       - app_net
 
-  # Frontend Next.js pour l'interface utilisateur
+  # ---------------------------------------------------------------------------
+  # Celery Worker — execution des taches asynchrones longues
+  # Taches incluses :
+  #   - generate_report_pdf  : appel LLM + mise en page PDF + upload MinIO
+  #   - run_embedding_job    : calcul et indexation des embeddings dans Qdrant
+  #   - trigger_finetune     : lancement du fine-tuning QLoRA (si GPU disponible)
+  #   - cleanup_audio_files  : suppression des fichiers audio temporaires
+  # ---------------------------------------------------------------------------
+  celery-worker:
+    image: python:3.12-slim
+    container_name: local_celery_worker
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt
+      && celery -A app.celery_app worker
+           --loglevel=info
+           --concurrency=2
+           --queues=default,reports,embeddings
+           --hostname=worker@%h"
+    volumes:
+      - ./backend:/app
+      - shared_tmp:/tmp/interviewai
+    env_file:
+      - .env
+    environment:
+      APP_ENV:         ${APP_ENV:-development}
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL:    postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL:       redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL:     redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
+      QDRANT_URL:      http://qdrant:6333
+      MINIO_ENDPOINT:  minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_API_KEY:    ${GROQ_API_KEY}
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_API_KEY:    ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT:    ${LANGCHAIN_PROJECT:-interviewai-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  # ---------------------------------------------------------------------------
+  # Celery Beat — planificateur de taches periodiques
+  # Taches planifiees :
+  #   - Toutes les 24h : nettoyage des fichiers audio > 7 jours
+  #   - Toutes les 6h  : recalcul des statistiques agregees
+  # ---------------------------------------------------------------------------
+  celery-beat:
+    image: python:3.12-slim
+    container_name: local_celery_beat
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt
+      && celery -A app.celery_app beat
+           --loglevel=info
+           --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      APP_ENV:         ${APP_ENV:-development}
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL:    postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      CELERY_BROKER_URL:     redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  # ---------------------------------------------------------------------------
+  # Flower — dashboard de monitoring Celery (taches, workers, queues)
+  # Acces : http://localhost:${FLOWER_PORT}
+  # ---------------------------------------------------------------------------
+  flower:
+    image: mher/flower:2.0
+    container_name: local_flower
+    restart: unless-stopped
+    command: >
+      celery flower
+        --broker=redis://:${REDIS_PASSWORD}@redis:6379/1
+        --port=5555
+        --basic_auth=${FLOWER_USER}:${FLOWER_PASSWORD}
+    ports:
+      - "${FLOWER_PORT}:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  # ===========================================================================
+  # APPLICATION — FRONTEND
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Next.js 14 — interface candidat
+  # Pages principales :
+  #   /               : landing + connexion
+  #   /profile        : saisie CV + configuration de session
+  #   /session/[id]   : interface d'entretien temps reel (audio + texte)
+  #   /results/[id]   : rapport de session + recommandations
+  #   /dashboard      : historique des sessions et progression
+  # ---------------------------------------------------------------------------
   frontend:
     image: node:20-alpine
     container_name: local_frontend
     restart: unless-stopped
-    # Repertoire de travail dans le conteneur
     working_dir: /app
-    # Installation deps JS puis lancement serveur de dev Next.js
     command: >
       sh -c "npm ci
       && npm run dev -- --hostname 0.0.0.0 --port 3000"
-    # Live-reload: code source monte + node_modules isole dans un volume Docker
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
-    # Charge les variables d'environnement depuis .env
     env_file:
       - .env
-    # Variables runtime frontend
     environment:
-      NODE_ENV: development
-      NEXT_TELEMETRY_DISABLED: "1"
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT}
-    # Optionnel: attend que le backend soit healthy
+      NODE_ENV:                  development
+      NEXT_TELEMETRY_DISABLED:   "1"
+      # URL de l'API backend (accessible depuis le navigateur)
+      NEXT_PUBLIC_API_BASE_URL:  http://localhost:${BACKEND_PORT}
+      # URL WebSocket pour la session audio temps reel
+      NEXT_PUBLIC_WS_URL:        ws://localhost:${BACKEND_PORT}/ws
+      # URL MinIO publique pour le telechargement des rapports PDF
+      NEXT_PUBLIC_STORAGE_URL:   http://localhost:${MINIO_API_PORT}/interview-reports
     depends_on:
       backend:
         condition: service_healthy
-    # Port expose pour acces navigateur
     ports:
       - "${FRONTEND_PORT}:3000"
-    # Reseau interne partage
     networks:
       - app_net
 
-  # Interface d'administration PostgreSQL dans le navigateur
+  # ===========================================================================
+  # OUTILS D'ADMINISTRATION ET DE MONITORING
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # pgAdmin 4 — interface web d'administration PostgreSQL
+  # Acces : http://localhost:${PGADMIN_PORT}
+  # ---------------------------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:8
     container_name: local_pgadmin
     restart: unless-stopped
-    # Charge les identifiants depuis .env
     env_file:
       - .env
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
       PGADMIN_CONFIG_SERVER_MODE: "False"
-    # pgAdmin demarre apres PostgreSQL healthy
     depends_on:
       postgres:
         condition: service_healthy
-    # Port HTTP pgAdmin
     ports:
       - "${PGADMIN_PORT}:80"
-    # Persistance des preferences/connexions pgAdmin
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-    # Reseau interne partage
     networks:
       - app_net
 
-# Reseau prive unique pour la communication interne entre services
+  # ---------------------------------------------------------------------------
+  # RedisInsight — interface web de visualisation Redis
+  # Utile pour inspecter le cache, les files Celery, les sessions actives
+  # Acces : http://localhost:${REDISINSIGHT_PORT}
+  # ---------------------------------------------------------------------------
+  redisinsight:
+    image: redislabs/redisinsight:latest
+    container_name: local_redisinsight
+    restart: unless-stopped
+    ports:
+      - "${REDISINSIGHT_PORT}:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+
+# =============================================================================
+# RESEAU
+# Un seul reseau bridge prive pour toute la communication inter-services.
+# Le frontend communique avec le backend via l'hote (ports exposes),
+# les services backend communiquent entre eux via leurs noms de service DNS.
+# =============================================================================
 networks:
   app_net:
     name: local_ai_network
     driver: bridge
 
-# Volumes nommes (persistance des donnees)
+# =============================================================================
+# VOLUMES NOMMES
+# Tous les volumes sont nommes pour survivre aux docker compose down/up.
+# Ne PAS utiliser docker compose down -v en production (efface les donnees).
+# =============================================================================
 volumes:
-  postgres_data:
-  qdrant_data:
-  pgadmin_data:
-  frontend_node_modules:
+  # Donnees persistantes
+  postgres_data:       # Tables relationnelles
+  qdrant_data:         # Index vectoriels RAG
+  redis_data:          # Persistance RDB Redis
+  minio_data:          # Fichiers audio + rapports PDF
+  pgadmin_data:        # Preferences pgAdmin
+  redisinsight_data:   # Configuration RedisInsight
+
+  # Volumes applicatifs
+  frontend_node_modules:  # node_modules isole (evite conflits hote/conteneur)
+  shared_tmp:             # Fichiers temporaires partages backend <-> celery-worker
