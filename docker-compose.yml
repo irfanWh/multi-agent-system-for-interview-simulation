@@ -47,9 +47,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Script d'initialisation execute au premier demarrage
-      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost"]
+      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD} pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -186,28 +185,30 @@ services:
       # Cache des modeles Whisper telecharges (evite re-telechargement)
       - ./models/whisper:/root/.cache/huggingface/hub
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\" || exit 1"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 60s    # Le chargement du modele prend du temps
+      retries: 20
+      start_period: 600s    # Le chargement du modele prend du temps
     networks:
       - app_net
 
   # ---------------------------------------------------------------------------
-  # Coqui TTS — Text-to-Speech via XTTS-v2
-  # Modele : tts_models/multilingual/multi-dataset/xtts_v2
-  # Voix : synthese multilingue (FR/EN/AR), clonage possible depuis sample audio
-  # API REST : POST /api/tts -> stream audio WAV
-  # Note : premier demarrage lent (telechargement modele ~2 Go)
+  # Coqui TTS — Text-to-Speech via YourTTS
+  # Modele : tts_models/multilingual/multi-dataset/your_tts
+  # Voix : synthese multilingue (FR/EN/PT), clonage possible depuis sample audio
+  # API REST : GET /api/tts -> stream audio WAV
+  # Note : premier demarrage lent (telechargement modele)
   # ---------------------------------------------------------------------------
   tts:
     image: ghcr.io/coqui-ai/tts-cpu:latest
     container_name: local_tts
     restart: unless-stopped
+    environment:
+      COQUI_TOS_AGREED: "1"
     entrypoint: >
       python3 TTS/server/server.py
-        --model_name tts_models/multilingual/multi-dataset/xtts_v2
+        --model_name tts_models/multilingual/multi-dataset/your_tts
         --port 5002
         --use_cuda false
     ports:
@@ -216,11 +217,11 @@ services:
       # Cache des modeles TTS (evite re-telechargement du modele ~2 Go)
       - ./models/tts:/root/.local/share/tts
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5002/api/tts?text=test&language_id=fr || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5002/').read()\" || exit 1"]
       interval: 20s
       timeout: 15s
-      retries: 8
-      start_period: 120s   # XTTS-v2 prend ~90s pour se charger
+      retries: 15
+      start_period: 600s   # YourTTS prend du temps pour se charger
     networks:
       - app_net
 
@@ -234,7 +235,7 @@ services:
   # Hot-reload active en dev via --reload uvicorn
   # ---------------------------------------------------------------------------
   backend:
-    image: python:3.12-slim
+    image: python:3.12
     container_name: local_backend
     restart: unless-stopped
     working_dir: /app
@@ -273,7 +274,7 @@ services:
       MINIO_BUCKET_REPORTS: interview-reports
 
       # LLM APIs
-      GROQ_API_KEY: ${GROQ_API_KEY}
+      #GROQ_API_KEY: ${GROQ_API_KEY}
       GROQ_API_KEY:    ${GROQ_API_KEY}
 
       # Observabilite LangSmith
@@ -301,7 +302,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 15
-      start_period: 30s
+      start_period: 300s
     networks:
       - app_net
 
@@ -314,7 +315,7 @@ services:
   #   - cleanup_audio_files  : suppression des fichiers audio temporaires
   # ---------------------------------------------------------------------------
   celery-worker:
-    image: python:3.12-slim
+    image: python:3.12
     container_name: local_celery_worker
     restart: unless-stopped
     working_dir: /app
@@ -341,7 +342,7 @@ services:
       MINIO_ENDPOINT:  minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      GROQ_API_KEY: ${GROQ_API_KEY}
+      #GROQ_API_KEY: ${GROQ_API_KEY}
       GROQ_API_KEY:    ${GROQ_API_KEY}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       LANGCHAIN_API_KEY:    ${LANGCHAIN_API_KEY:-}
@@ -363,7 +364,7 @@ services:
   #   - Toutes les 6h  : recalcul des statistiques agregees
   # ---------------------------------------------------------------------------
   celery-beat:
-    image: python:3.12-slim
+    image: python:3.12
     container_name: local_celery_beat
     restart: unless-stopped
     working_dir: /app

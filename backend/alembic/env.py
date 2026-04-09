@@ -21,7 +21,9 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Inject the environment's DATABASE_URL dynamically
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# Escape % signs for ConfigParser interpolation
+safe_url = DATABASE_URL.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", safe_url)
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -57,9 +59,11 @@ async def run_async_migrations() -> None:
     and associate a connection with the context.
 
     """
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = DATABASE_URL
 
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

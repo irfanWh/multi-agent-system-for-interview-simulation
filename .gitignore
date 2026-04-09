@@ -48,6 +48,7 @@ models/whisper/snapshots/
 models/tts/*.pth
 models/tts/*.pth.tar
 models/tts/tts_models/
+models/tts/**/*.pth
 
 # --- Misc ---
 *.log

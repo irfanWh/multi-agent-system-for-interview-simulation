@@ -14,6 +14,10 @@ if DATABASE_URL.startswith("postgresql://"):
 elif DATABASE_URL.startswith("postgresql+psycopg://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
 
+# Escape passwords containing @ (e.g. irfan123@)
+if "@@" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("@@", "%40@")
+
 # SQLAlchemy Async Engine
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 
