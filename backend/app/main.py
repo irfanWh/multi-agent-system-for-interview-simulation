@@ -7,10 +7,13 @@ from app.api.profiles import router as profiles_router
 from app.api.sessions import router as sessions_router
 from app.api.websocket import router as websocket_router
 
+from app.services.qdrant_service import QdrantService
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # App startup - DB is already initialized via Alembic
-    # Any pre-caching or connection pooling can be done here
+    # App startup — initialise Qdrant collections
+    qdrant = QdrantService.get_instance()
+    await qdrant.init_collections()
     yield
     # App shutdown
     pass
