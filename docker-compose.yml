@@ -172,6 +172,7 @@ services:
   whisper:
     image: fedirz/faster-whisper-server:latest-cpu
     container_name: local_whisper
+    platform: linux/amd64
     restart: unless-stopped
     environment:
       WHISPER__MODEL:   ${WHISPER_MODEL:-large-v3}
@@ -203,6 +204,7 @@ services:
   tts:
     image: ghcr.io/coqui-ai/tts-cpu:latest
     container_name: local_tts
+    platform: linux/amd64
     restart: unless-stopped
     environment:
       COQUI_TOS_AGREED: "1"
@@ -319,13 +321,7 @@ services:
     container_name: local_celery_worker
     restart: unless-stopped
     working_dir: /app
-    command: >
-      sh -c "pip install --no-cache-dir -r requirements.txt
-      && celery -A app.celery_app worker
-           --loglevel=info
-           --concurrency=2
-           --queues=default,reports,embeddings
-           --hostname=worker@%h"
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues=default,reports,embeddings --hostname=worker@%h"
     volumes:
       - ./backend:/app
       - shared_tmp:/tmp/interviewai
@@ -368,11 +364,7 @@ services:
     container_name: local_celery_beat
     restart: unless-stopped
     working_dir: /app
-    command: >
-      sh -c "pip install --no-cache-dir -r requirements.txt
-      && celery -A app.celery_app beat
-           --loglevel=info
-           --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && celery -A app.celery_app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
     volumes:
       - ./backend:/app
     env_file:
@@ -430,9 +422,7 @@ services:
     container_name: local_frontend
     restart: unless-stopped
     working_dir: /app
-    command: >
-      sh -c "npm ci
-      && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0 --port 3000"
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
