@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.profiles import router as profiles_router
 from app.api.sessions import router as sessions_router
+from app.api.exchanges import router as exchanges_router
 from app.api.websocket import router as websocket_router
 
 from app.services.qdrant_service import QdrantService
@@ -35,6 +36,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(profiles_router, prefix="/profiles", tags=["profiles"])
 app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
+app.include_router(exchanges_router, tags=["exchanges"])
 app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 
 @app.get("/health")
