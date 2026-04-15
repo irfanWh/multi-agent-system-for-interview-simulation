@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api.deps import get_db, get_current_user
-from app.models.orm import CandidateProfile, User
+from app.models.orm import CandidateProfile, User, ExperienceLevel
 from app.models.schemas import (
     CandidateProfileCreate,
     CandidateProfileUpdate,
@@ -24,7 +24,7 @@ router = APIRouter()
 async def upload_cv(
     file: UploadFile = File(...),
     target_role: str = "Software Engineer",
-    experience_level: str = "junior",
+    experience_level: ExperienceLevel = ExperienceLevel.junior,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Any:

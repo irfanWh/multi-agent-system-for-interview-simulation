@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test InterviewAI WebSocket</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; }
+        #chat { border: 1px solid #ccc; height: 400px; overflow-y: scroll; padding: 10px; margin-bottom: 20px; background: #f9f9f9; }
+        .msg { margin-bottom: 10px; padding: 8px; border-radius: 5px; }
+        .server { background: #e3f2fd; text-align: left; }
+        .client { background: #dcedc8; text-align: right; }
+        .system { background: #ffe0b2; text-align: center; font-size: 0.9em; font-style: italic; }
+        input[type="text"] { width: 75%; padding: 10px; }
+        button { padding: 10px; width: 20%; cursor: pointer; }
+        #setup { margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h2>Testeur InterviewAI (Agent 3)</h2>
+    
+    <div id="setup">
+        <input type="text" id="sessionId" placeholder="Entrez le session_id ici..." style="width: 60%;">
+        <button onclick="connect()">Connecter</button>
+    </div>
+
+    <div id="chat"></div>
+
+    <div>
+        <input type="text" id="messageInput" placeholder="Votre réponse..." disabled>
+        <button id="sendBtn" onclick="sendMessage()" disabled>Envoyer</button>
+    </div>
+
+    <script>
+        let ws;
+
+        function logMessage(text, sender) {
+            const chat = document.getElementById("chat");
+            const div = document.createElement("div");
+            div.className = "msg " + sender;
+            div.innerHTML = `<strong>${sender.toUpperCase()}:</strong> ${text}`;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function connect() {
+            const sid = document.getElementById("sessionId").value.trim();
+            if(!sid) return alert("Veuillez entrer un session_id valide !");
+
+            ws = new WebSocket(`ws://localhost:8000/ws/session/${sid}`);
+
+            ws.onopen = () => {
+                logMessage("Connecté au serveur WebSocket !", "system");
+                document.getElementById("messageInput").disabled = false;
+                document.getElementById("sendBtn").disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === "question") {
+                    logMessage(`[Question ${data.turn}/${data.total}] ` + data.text, "server");
+                } else if (data.type === "follow_up") {
+                    logMessage("[Relance] " + data.text, "server");
+                } else if (data.type === "session_complete") {
+                    logMessage("[Terminé] " + data.message, "server");
+                } else if (data.type === "error") {
+                    logMessage("[Erreur] " + data.message, "system");
+                } else {
+                    logMessage(data.text, "server");
+                }
+            };
+
+            ws.onclose = () => logMessage("Déconnecté.", "system");
+            ws.onerror = () => logMessage("Erreur WebSocket. Vérifiez le serveur et l'ID.", "system");
+        }
+
+        function sendMessage() {
+            const input = document.getElementById("messageInput");
+            if(!input.value) return;
+            
+            const msg = { type: "answer", text: input.value };
+            ws.send(JSON.stringify(msg));
+            
+            logMessage(input.value, "client");
+            input.value = "";
+        }
+
+        // Entrée pour valider avec la touche "Entrée"
+        document.getElementById("messageInput").addEventListener("keypress", function(e) {
+            if (e.key === "Enter") sendMessage();
+        });
+    </script>
+</body>
+</html>
