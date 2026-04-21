@@ -44,7 +44,8 @@ async def create_session(
         result = await run_profile_analyzer(
             cv_text=profile.cv_text,
             target_role=profile.target_role,
-            experience_level=profile.experience_level.value
+            experience_level=profile.experience_level.value,
+            job_description=profile.job_description,
         )
         if result.get("error"):
             raise HTTPException(status_code=500, detail=result["error"])
@@ -59,7 +60,9 @@ async def create_session(
     orch_result = await run_orchestrator(
         job_profile=profile.skills_extracted,
         interview_type=session_data.interview_type.value,
-        duration_minutes=duration_minutes
+        duration_minutes=duration_minutes,
+        job_description=profile.job_description,
+        focus_areas=session_data.focus_areas,
     )
     
     if orch_result.get("error"):

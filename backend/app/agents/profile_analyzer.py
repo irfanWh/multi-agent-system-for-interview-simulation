@@ -124,13 +124,18 @@ def parse_cv_node(state: ProfileAnalyzerState) -> ProfileAnalyzerState:
         llm = _get_llm()
         structured_llm = llm.with_structured_output(JobProfile)
 
+        prompt_text = PARSE_CV_PROMPT.format(
+            cv_text=state["cv_text"],
+            target_role=state["target_role"],
+            experience_level=state["experience_level"],
+        )
+        
+        if state.get("job_description"):
+            prompt_text += f"\n\nJob description provided by the candidate:\n{state['job_description']}\n\nUse this to identify skill gaps, calibrate the expected level, and determine priority domains more precisely."
+
         result: JobProfile = _invoke_with_retries(
             structured_llm,
-            PARSE_CV_PROMPT.format(
-                cv_text=state["cv_text"],
-                target_role=state["target_role"],
-                experience_level=state["experience_level"],
-            ),
+            prompt_text,
         )
         return {"extracted_profile": result.model_dump(), "error": None}
     except Exception as exc:
@@ -157,6 +162,10 @@ async def enrich_with_rag_node(state: ProfileAnalyzerState) -> ProfileAnalyzerSt
 
         # Search questions_bank for questions related to the candidate's skills
         query = f"{state['target_role']} {' '.join(skills[:5])}"
+        if state.get("job_description"):
+            # Use job description logic as requested to enhance similarity search
+            query += " " + state["job_description"][:500]
+
         results = await qdrant.search_questions(
             query=query,
             filters={"level": state.get("experience_level", "junior")},

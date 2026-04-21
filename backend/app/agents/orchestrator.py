@@ -38,6 +38,8 @@ class OrchestratorState(TypedDict, total=False):
     job_profile: dict
     interview_type: str
     duration_minutes: int
+    job_description: Optional[str]
+    focus_areas: Optional[List[str]]
     
     total_questions: int
     question_slots: List[dict]
@@ -73,7 +75,11 @@ def plan_questions_node(state: OrchestratorState) -> OrchestratorState:
             behav_count = total_questions - tech_count
             
         profile = state.get("job_profile", {})
-        domains = profile.get("priority_domains", ["general"])
+        
+        # Override domains with focus_areas if provided, else priority_domains
+        domains = state.get("focus_areas")
+        if not domains:
+            domains = profile.get("priority_domains", ["general"])
         if not domains:
             domains = ["general"]
             
@@ -117,6 +123,8 @@ async def fetch_questions_node(state: OrchestratorState) -> OrchestratorState:
             
             # Build semantic search query
             query = f"{domain} {q_type} interview question for {level} level candidate"
+            if state.get("job_description"):
+                query += f" relevant to this job context: {state['job_description'][:400]}"
             
             # Fetch from Qdrant
             results = await qdrant.search_questions(
@@ -169,6 +177,10 @@ Question: {question_text}
 Domain: {domain}
 Type: {type}
 Target Level: {difficulty}
+Job Context: {job_description}
+
+Use the job description to prioritize criteria that match the specific 
+technologies and responsibilities mentioned for this role!
 
 Produce output according to the strictly requested schema.
 """
@@ -192,7 +204,8 @@ def build_rubric_node(state: OrchestratorState) -> OrchestratorState:
                     question_text=q["question_text"],
                     domain=q["domain"],
                     type=q["type"],
-                    difficulty=q["difficulty"]
+                    difficulty=q["difficulty"],
+                    job_description=state.get("job_description") or "Not provided"
                 )
             )
             
@@ -242,7 +255,13 @@ def build_orchestrator_graph() -> StateGraph:
 
 orchestrator_app = build_orchestrator_graph().compile()
 
-async def run_orchestrator(job_profile: dict, interview_type: str, duration_minutes: int) -> dict:
+async def run_orchestrator(
+    job_profile: dict, 
+    interview_type: str, 
+    duration_minutes: int, 
+    job_description: str | None = None,
+    focus_areas: list[str] | None = None
+) -> dict:
     """
     Public entry point: run the Orchestrator agent.
     Returns the final state dict containing 'session_plan' or 'error'.
@@ -250,7 +269,9 @@ async def run_orchestrator(job_profile: dict, interview_type: str, duration_minu
     initial_state: OrchestratorState = {
         "job_profile": job_profile,
         "interview_type": interview_type,
-        "duration_minutes": duration_minutes
+        "duration_minutes": duration_minutes,
+        "job_description": job_description,
+        "focus_areas": focus_areas
     }
     result = await orchestrator_app.ainvoke(initial_state)
     return result

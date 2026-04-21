@@ -45,12 +45,16 @@ export const api = {
     return fetchAPI('/auth/me');
   },
 
-  uploadCV: async (file: File, role: string, level: string) => {
+  uploadCV: async (file: File, role: string, level: string, jobText?: string, jobUrl?: string) => {
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("target_role", role);
+    formData.append("experience_level", level);
+    if (jobText) formData.append("job_description_text", jobText);
+    if (jobUrl) formData.append("job_description_url", jobUrl);
 
     const token = localStorage.getItem('token');
-    return fetch(`${API_BASE_URL}/profiles/upload-cv?target_role=${encodeURIComponent(role)}&experience_level=${encodeURIComponent(level)}`, {
+    return fetch(`${API_BASE_URL}/profiles/upload-cv`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -61,6 +65,10 @@ export const api = {
 
   analyzeProfile: async (profileId: string) => {
     return fetchAPI(`/profiles/${profileId}/analyze`, { method: 'POST' });
+  },
+
+  analyzeMatch: async (profileId: string) => {
+    return fetchAPI(`/profiles/${profileId}/match-analysis`, { method: 'POST' });
   },
 
   createSession: async (data: any) => {

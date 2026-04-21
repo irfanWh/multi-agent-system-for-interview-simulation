@@ -55,7 +55,9 @@ class CandidateProfile(Base):
     cv_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     target_role: Mapped[str] = mapped_column(String(255), nullable=False)
     experience_level: Mapped[ExperienceLevel] = mapped_column(Enum(ExperienceLevel), nullable=False)
+    job_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     skills_extracted: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    match_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
 
     user: Mapped["User"] = relationship("User", back_populates="profiles")

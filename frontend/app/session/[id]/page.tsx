@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { WS_URL } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { AudioRecorder } from './components/AudioRecorder';
 
 interface Message {
   id: string;
@@ -22,6 +23,7 @@ export default function InterviewSession() {
   const [inputValue, setInputValue] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [useAudio, setUseAudio] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -56,6 +58,12 @@ export default function InterviewSession() {
         total: data.total
       };
       
+      if (data.type === 'transcript') {
+        const trMsg: Message = { id: Date.now().toString() + Math.random(), sender: 'client', text: data.text };
+        setMessages(prev => [...prev, trMsg]);
+        return; // Don't push generic empty server message
+      }
+      
       setMessages(prev => [...prev, newMsg]);
 
       if (data.type === 'session_complete') {
@@ -73,15 +81,29 @@ export default function InterviewSession() {
     };
   }, [id]);
 
-  const sendMessage = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!inputValue.trim() || !wsRef.current || !isConnected) return;
+  const sendMessage = (textOrEvent?: string | React.FormEvent) => {
+    let textToSend = inputValue;
 
-    const payload = { type: 'answer', text: inputValue };
+    if (textOrEvent && typeof textOrEvent !== 'string' && 'preventDefault' in textOrEvent) {
+      textOrEvent.preventDefault();
+    } else if (typeof textOrEvent === 'string') {
+      textToSend = textOrEvent;
+    }
+
+    if (!textToSend.trim() || !wsRef.current || !isConnected) return;
+
+    const payload = { type: 'answer', text: textToSend };
     wsRef.current.send(JSON.stringify(payload));
     
-    setMessages(prev => [...prev, { id: Date.now().toString(), sender: 'client', text: inputValue }]);
+    setMessages(prev => [...prev, { id: Date.now().toString(), sender: 'client', text: textToSend }]);
     setInputValue('');
+  };
+
+  const toggleMode = (newState: boolean) => {
+    setUseAudio(newState);
+    if (wsRef.current && isConnected) {
+      wsRef.current.send(JSON.stringify({ type: 'set_mode', mode: newState ? 'audio' : 'text' }));
+    }
   };
 
   return (
@@ -91,9 +113,20 @@ export default function InterviewSession() {
           <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
           Live Interview
         </h1>
-        {isComplete && (
-          <Button onClick={() => router.push('/profile')}>Return to Dashboard</Button>
-        )}
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={useAudio} 
+              onChange={(e) => toggleMode(e.target.checked)} 
+              className="rounded"
+            />
+            {useAudio ? 'Mode Audio' : 'Mode Texte'}
+          </label>
+          {isComplete && (
+            <Button onClick={() => router.push('/profile')}>Return to Dashboard</Button>
+          )}
+        </div>
       </div>
 
       <Card className="flex-1 flex flex-col overflow-hidden">
@@ -126,30 +159,38 @@ export default function InterviewSession() {
           <div ref={messagesEndRef} />
         </CardContent>
         
-        <div className="p-4 border-t bg-white">
-          <form onSubmit={sendMessage} className="flex gap-2">
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              placeholder={isComplete ? "Interview finished" : "Type your answer... (Press Enter to send)"}
-              disabled={!isConnected || isComplete}
-              className="flex-1 resize-none rounded-md border border-slate-300 p-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-600 min-h-[60px] max-h-[200px]"
-              rows={2}
-            />
-            <Button 
-              type="submit" 
-              disabled={!isConnected || isComplete || !inputValue.trim()}
-              className="px-6"
-            >
-              Send
-            </Button>
-          </form>
+        <div className="p-4 border-t bg-white space-y-4">
+          <AudioRecorder 
+            onSendMessage={sendMessage}
+            wsRef={wsRef}
+            isConnected={isConnected}
+            isRecordingMode={useAudio}
+          />
+          {!useAudio && (
+            <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2">
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                placeholder={isComplete ? "Interview finished" : "Type your answer... (Press Enter to send)"}
+                disabled={!isConnected || isComplete}
+                className="flex-1 resize-none rounded-md border border-slate-300 p-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-600 min-h-[60px] max-h-[200px]"
+                rows={2}
+              />
+              <Button 
+                type="submit" 
+                disabled={!isConnected || isComplete || !inputValue.trim()}
+                className="px-6"
+              >
+                Send
+              </Button>
+            </form>
+          )}
         </div>
       </Card>
     </div>

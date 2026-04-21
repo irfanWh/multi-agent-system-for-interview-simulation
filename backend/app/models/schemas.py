@@ -32,8 +32,10 @@ class UserResponse(UserBase):
 class CandidateProfileBase(BaseModel):
     target_role: str
     experience_level: ExperienceLevel
+    job_description: Optional[str] = None
     cv_text: Optional[str] = None
     skills_extracted: Optional[Dict[str, Any]] = None
+    match_report: Optional[Dict[str, Any]] = None
 
 class CandidateProfileCreate(CandidateProfileBase):
     user_id: UUID
@@ -41,8 +43,10 @@ class CandidateProfileCreate(CandidateProfileBase):
 class CandidateProfileUpdate(BaseModel):
     target_role: Optional[str] = None
     experience_level: Optional[ExperienceLevel] = None
+    job_description: Optional[str] = None
     cv_text: Optional[str] = None
     skills_extracted: Optional[Dict[str, Any]] = None
+    match_report: Optional[Dict[str, Any]] = None
 
 class CandidateProfileResponse(CandidateProfileBase):
     id: UUID
@@ -65,6 +69,7 @@ class SessionBase(BaseModel):
 class SessionCreate(SessionBase):
     user_id: UUID
     profile_id: Optional[UUID] = None
+    focus_areas: Optional[List[str]] = None
 
 class SessionUpdate(BaseModel):
     status: Optional[SessionStatus] = None
