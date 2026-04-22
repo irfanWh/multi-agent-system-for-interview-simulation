@@ -4,16 +4,14 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { WS_URL } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
-import { Card, CardContent } from '@/components/ui/Card';
 import { AudioRecorder } from './components/AudioRecorder';
 
 interface Message {
   id: string;
   sender: 'server' | 'client' | 'system';
   text: string;
-  type?: 'question' | 'follow_up' | 'session_complete' | 'error';
-  turn?: number;
-  total?: number;
+  type?: 'question' | 'follow_up' | 'session_complete' | 'error' | 'transcript';
+  anchor_title?: string;
 }
 
 export default function InterviewSession() {
@@ -24,6 +22,7 @@ export default function InterviewSession() {
   const [isConnected, setIsConnected] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [useAudio, setUseAudio] = useState(false);
+  const [currentAnchor, setCurrentAnchor] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -37,34 +36,42 @@ export default function InterviewSession() {
 
   useEffect(() => {
     if (!id) return;
-    
-    // Connect to WebSockets
+
     const ws = new WebSocket(`${WS_URL}/session/${id}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
       setIsConnected(true);
-      setMessages(prev => [...prev, { id: Date.now().toString(), sender: 'system', text: 'Connected to InterviewAI' }]);
     };
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      const newMsg: Message = {
+
+      // Update current anchor topic when server provides it
+      if (data.anchor_title) {
+        setCurrentAnchor(data.anchor_title);
+      }
+
+      if (data.type === 'transcript') {
+        setMessages(prev => [...prev, {
+          id: Date.now().toString() + Math.random(),
+          sender: 'client',
+          text: `🎤 ${data.text}`,
+          type: 'transcript'
+        }]);
+        return;
+      }
+
+      const text = data.text || data.message || '';
+      if (!text) return;
+
+      setMessages(prev => [...prev, {
         id: Date.now().toString() + Math.random(),
         sender: data.type === 'error' ? 'system' : 'server',
-        text: data.text || data.message || '',
+        text,
         type: data.type,
-        turn: data.turn,
-        total: data.total
-      };
-      
-      if (data.type === 'transcript') {
-        const trMsg: Message = { id: Date.now().toString() + Math.random(), sender: 'client', text: data.text };
-        setMessages(prev => [...prev, trMsg]);
-        return; // Don't push generic empty server message
-      }
-      
-      setMessages(prev => [...prev, newMsg]);
+        anchor_title: data.anchor_title
+      }]);
 
       if (data.type === 'session_complete') {
         setIsComplete(true);
@@ -73,12 +80,9 @@ export default function InterviewSession() {
 
     ws.onclose = () => {
       setIsConnected(false);
-      setMessages(prev => [...prev, { id: Date.now().toString(), sender: 'system', text: 'Disconnected from server' }]);
     };
 
-    return () => {
-      ws.close();
-    };
+    return () => { ws.close(); };
   }, [id]);
 
   const sendMessage = (textOrEvent?: string | React.FormEvent) => {
@@ -92,10 +96,12 @@ export default function InterviewSession() {
 
     if (!textToSend.trim() || !wsRef.current || !isConnected) return;
 
-    const payload = { type: 'answer', text: textToSend };
-    wsRef.current.send(JSON.stringify(payload));
-    
-    setMessages(prev => [...prev, { id: Date.now().toString(), sender: 'client', text: textToSend }]);
+    wsRef.current.send(JSON.stringify({ type: 'answer', text: textToSend }));
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      sender: 'client',
+      text: textToSend
+    }]);
     setInputValue('');
   };
 
@@ -107,92 +113,284 @@ export default function InterviewSession() {
   };
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto p-4 md:p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          Live Interview
-        </h1>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={useAudio} 
-              onChange={(e) => toggleMode(e.target.checked)} 
-              className="rounded"
+    <div className="session-page">
+      {/* Header */}
+      <div className="session-header">
+        <div className="session-header-left">
+          <div className={`connection-dot ${isConnected ? 'connected' : 'disconnected'}`} />
+          <h1 className="session-title">Live Interview</h1>
+          {currentAnchor && !isComplete && (
+            <div className="topic-pill">
+              <span className="topic-label">Topic</span>
+              <span className="topic-name">{currentAnchor}</span>
+            </div>
+          )}
+        </div>
+        <div className="session-header-right">
+          <label className="mode-toggle">
+            <input
+              type="checkbox"
+              checked={useAudio}
+              onChange={(e) => toggleMode(e.target.checked)}
             />
-            {useAudio ? 'Mode Audio' : 'Mode Texte'}
+            <span>{useAudio ? '🎙️ Audio' : '⌨️ Text'}</span>
           </label>
           {isComplete && (
-            <Button onClick={() => router.push('/profile')}>Return to Dashboard</Button>
+            <Button onClick={() => router.push('/profile')}>View Report</Button>
           )}
         </div>
       </div>
 
-      <Card className="flex-1 flex flex-col overflow-hidden">
-        <CardContent className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
+      {/* Chat area */}
+      <div className="chat-container">
+        <div className="messages-area">
+          {messages.length === 0 && isConnected && (
+            <div className="chat-placeholder">
+              <div className="chat-placeholder-icon">🎯</div>
+              <p>The interviewer is preparing your session…</p>
+            </div>
+          )}
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.sender === 'client' ? 'justify-end' : 'justify-start'}`}>
-              <div 
-                className={`max-w-[85%] rounded-2xl p-4 ${
-                  msg.sender === 'client' 
-                    ? 'bg-blue-600 text-white rounded-tr-sm' 
-                    : msg.sender === 'system' 
-                      ? 'bg-amber-100 text-amber-800 text-sm mx-auto'
-                      : 'bg-white border border-slate-200 text-slate-800 shadow-sm rounded-tl-sm'
-                }`}
-              >
-                {msg.sender === 'server' && msg.type === 'question' && (
-                  <div className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-2">
-                    Question {msg.turn} of {msg.total}
-                  </div>
+            <div
+              key={msg.id}
+              className={`message-row ${msg.sender === 'client' ? 'message-row-right' : msg.sender === 'system' ? 'message-row-center' : 'message-row-left'}`}
+            >
+              {msg.sender === 'server' && (
+                <div className="avatar avatar-interviewer">AI</div>
+              )}
+              <div className={`bubble ${
+                msg.sender === 'client'
+                  ? 'bubble-candidate'
+                  : msg.sender === 'system'
+                    ? 'bubble-system'
+                    : 'bubble-interviewer'
+              }`}>
+                {msg.anchor_title && msg.type === 'question' && (
+                  <div className="bubble-anchor-tag">📌 {msg.anchor_title}</div>
                 )}
-                {msg.sender === 'server' && msg.type === 'follow_up' && (
-                  <div className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-2">
-                    Follow-up
-                  </div>
-                )}
-                <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
+                <div className="bubble-text">{msg.text}</div>
               </div>
+              {msg.sender === 'client' && (
+                <div className="avatar avatar-candidate">You</div>
+              )}
             </div>
           ))}
           <div ref={messagesEndRef} />
-        </CardContent>
-        
-        <div className="p-4 border-t bg-white space-y-4">
-          <AudioRecorder 
-            onSendMessage={sendMessage}
-            wsRef={wsRef}
-            isConnected={isConnected}
-            isRecordingMode={useAudio}
-          />
-          {!useAudio && (
-            <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2">
-              <textarea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder={isComplete ? "Interview finished" : "Type your answer... (Press Enter to send)"}
-                disabled={!isConnected || isComplete}
-                className="flex-1 resize-none rounded-md border border-slate-300 p-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-600 min-h-[60px] max-h-[200px]"
-                rows={2}
-              />
-              <Button 
-                type="submit" 
-                disabled={!isConnected || isComplete || !inputValue.trim()}
-                className="px-6"
-              >
-                Send
-              </Button>
-            </form>
-          )}
         </div>
-      </Card>
+
+        {/* Input */}
+        {!isComplete && (
+          <div className="input-area">
+            <AudioRecorder
+              onSendMessage={sendMessage}
+              wsRef={wsRef}
+              isConnected={isConnected}
+              isRecordingMode={useAudio}
+            />
+            {!useAudio && (
+              <form
+                onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
+                className="text-input-form"
+              >
+                <textarea
+                  id="answer-input"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder="Type your answer… (Enter to send, Shift+Enter for new line)"
+                  disabled={!isConnected}
+                  className="answer-textarea"
+                  rows={2}
+                />
+                <Button
+                  type="submit"
+                  id="send-answer-btn"
+                  disabled={!isConnected || !inputValue.trim()}
+                >
+                  Send →
+                </Button>
+              </form>
+            )}
+          </div>
+        )}
+
+        {isComplete && (
+          <div className="complete-banner">
+            <span>✅ Interview complete! Your responses have been recorded and are being evaluated.</span>
+            <Button onClick={() => router.push('/profile')}>See Profile & Report</Button>
+          </div>
+        )}
+      </div>
+
+      <style>{`
+        .session-page {
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+          font-family: 'Inter', system-ui, sans-serif;
+          color: #e2e8f0;
+        }
+        .session-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 24px;
+          background: rgba(15,23,42,0.8);
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+          backdrop-filter: blur(12px);
+          flex-shrink: 0;
+        }
+        .session-header-left { display: flex; align-items: center; gap: 12px; }
+        .session-header-right { display: flex; align-items: center; gap: 12px; }
+        .connection-dot {
+          width: 10px; height: 10px; border-radius: 50%;
+          flex-shrink: 0;
+          box-shadow: 0 0 8px currentColor;
+        }
+        .connection-dot.connected { background: #22c55e; color: #22c55e; }
+        .connection-dot.disconnected { background: #ef4444; color: #ef4444; }
+        .session-title { font-size: 18px; font-weight: 700; color: #f1f5f9; }
+        .topic-pill {
+          display: flex; align-items: center; gap: 6px;
+          background: rgba(99,102,241,0.2);
+          border: 1px solid rgba(99,102,241,0.4);
+          border-radius: 999px;
+          padding: 4px 12px;
+          font-size: 12px;
+        }
+        .topic-label { color: #818cf8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+        .topic-name { color: #c7d2fe; }
+        .mode-toggle {
+          display: flex; align-items: center; gap: 8px;
+          cursor: pointer; font-size: 14px; color: #94a3b8;
+        }
+        .mode-toggle input { cursor: pointer; }
+        .chat-container {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          overflow: hidden;
+          max-width: 900px;
+          width: 100%;
+          margin: 0 auto;
+          padding: 0 16px;
+        }
+        .messages-area {
+          flex: 1;
+          overflow-y: auto;
+          padding: 24px 0;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          scroll-behavior: smooth;
+        }
+        .messages-area::-webkit-scrollbar { width: 4px; }
+        .messages-area::-webkit-scrollbar-track { background: transparent; }
+        .messages-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+        .chat-placeholder {
+          display: flex; flex-direction: column;
+          align-items: center; justify-content: center;
+          gap: 12px; flex: 1; color: #64748b; font-size: 14px;
+        }
+        .chat-placeholder-icon { font-size: 36px; }
+        .message-row {
+          display: flex;
+          align-items: flex-end;
+          gap: 10px;
+        }
+        .message-row-right { flex-direction: row-reverse; }
+        .message-row-center { justify-content: center; }
+        .avatar {
+          width: 32px; height: 32px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 10px; font-weight: 700;
+          flex-shrink: 0;
+        }
+        .avatar-interviewer { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; }
+        .avatar-candidate { background: linear-gradient(135deg, #0ea5e9, #6366f1); color: white; }
+        .bubble {
+          max-width: 70%;
+          padding: 14px 18px;
+          border-radius: 18px;
+          line-height: 1.6;
+          font-size: 15px;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .bubble-interviewer {
+          background: rgba(255,255,255,0.06);
+          border: 1px solid rgba(255,255,255,0.1);
+          color: #e2e8f0;
+          border-bottom-left-radius: 4px;
+        }
+        .bubble-candidate {
+          background: linear-gradient(135deg, #6366f1, #4f46e5);
+          color: white;
+          border-bottom-right-radius: 4px;
+        }
+        .bubble-system {
+          background: rgba(234,179,8,0.1);
+          border: 1px solid rgba(234,179,8,0.3);
+          color: #fde68a;
+          font-size: 13px;
+          border-radius: 8px;
+          max-width: 90%;
+        }
+        .bubble-anchor-tag {
+          font-size: 11px; font-weight: 600;
+          color: #818cf8; text-transform: uppercase;
+          letter-spacing: 0.06em; margin-bottom: 8px;
+        }
+        .bubble-text { white-space: pre-wrap; }
+        .input-area {
+          padding: 16px 0 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          border-top: 1px solid rgba(255,255,255,0.08);
+          flex-shrink: 0;
+        }
+        .text-input-form {
+          display: flex;
+          gap: 10px;
+          align-items: flex-end;
+        }
+        .answer-textarea {
+          flex: 1;
+          background: rgba(255,255,255,0.06);
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 14px;
+          padding: 14px 18px;
+          color: #f1f5f9;
+          font-size: 15px;
+          font-family: inherit;
+          resize: none;
+          outline: none;
+          line-height: 1.5;
+          transition: border-color 0.2s;
+        }
+        .answer-textarea::placeholder { color: #475569; }
+        .answer-textarea:focus { border-color: rgba(99,102,241,0.6); }
+        .complete-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px;
+          background: rgba(34,197,94,0.1);
+          border: 1px solid rgba(34,197,94,0.3);
+          border-radius: 12px;
+          margin-bottom: 8px;
+          font-size: 14px;
+          color: #86efac;
+          gap: 16px;
+          flex-shrink: 0;
+        }
+      `}</style>
     </div>
   );
 }

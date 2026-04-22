@@ -96,6 +96,7 @@ class Exchange(Base):
     candidate_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     audio_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     response_time_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    react_scratchpad: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
 
     session: Mapped["Session"] = relationship("Session", back_populates="exchanges")

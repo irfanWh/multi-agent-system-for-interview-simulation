@@ -54,21 +54,24 @@ async def create_session(
         await db.commit()
         await db.refresh(profile)
 
-    # 3. Run Agent 2 — Orchestrator
-    from app.agents.orchestrator import run_orchestrator
+    # 3. Run Agent 2 — InterviewPlanner
+    from app.agents.interview_planner import run_interview_planner
     
-    orch_result = await run_orchestrator(
-        job_profile=profile.skills_extracted,
-        interview_type=session_data.interview_type.value,
-        duration_minutes=duration_minutes,
+    plan_result = await run_interview_planner(
+        cv_text=profile.cv_text,
         job_description=profile.job_description,
-        focus_areas=session_data.focus_areas,
+        match_report=profile.match_report,
+        interview_config={
+            "interview_type": session_data.interview_type.value,
+            "duration": duration_minutes,
+            "focus_areas": session_data.focus_areas if hasattr(session_data, 'focus_areas') else []
+        }
     )
     
-    if orch_result.get("error"):
-        raise HTTPException(status_code=500, detail=orch_result["error"])
+    if plan_result.get("error"):
+        raise HTTPException(status_code=500, detail=plan_result["error"])
         
-    session_plan = orch_result.get("session_plan")
+    session_plan = plan_result.get("interview_plan")
     
     # 4. Save Session
     new_session = Session(

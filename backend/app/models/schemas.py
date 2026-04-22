@@ -57,6 +57,31 @@ class CandidateProfileResponse(CandidateProfileBase):
 
 
 # ==============================================================================
+# INTERVIEW PLAN SCHEMAS
+# ==============================================================================
+class InterviewAnchor(BaseModel):
+    id: str
+    type: str = Field(description="'project'|'skill'|'gap'|'soft_skill'")
+    title: str
+    cv_reference: str
+    jd_relevance: str
+    opening_question: str
+    what_to_listen_for: List[str]
+    follow_up_directions: List[str]
+    red_flags: List[str]
+    time_allocation_minutes: int
+    priority: int
+
+class InterviewPlan(BaseModel):
+    candidate_name: str
+    role: str
+    total_duration_minutes: int
+    anchors: List[InterviewAnchor]
+    opening_statement: str
+    closing_statement: str
+
+
+# ==============================================================================
 # SESSION SCHEMAS
 # ==============================================================================
 class SessionBase(BaseModel):
@@ -94,6 +119,7 @@ class ExchangeBase(BaseModel):
     candidate_answer: Optional[str] = None
     audio_url: Optional[str] = None
     response_time_sec: Optional[float] = None
+    react_scratchpad: Optional[str] = None
 
 class ExchangeCreate(ExchangeBase):
     session_id: UUID
