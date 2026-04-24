@@ -16,6 +16,7 @@ class PlannerState(TypedDict, total=False):
     job_description: str
     match_report: Optional[dict]
     interview_config: dict
+    previously_used_openers: list[str]
     interview_plan: Optional[dict]
     error: Optional[str]
 
@@ -52,11 +53,57 @@ Types of anchors to find:
 - Experience gaps between CV level and JD expectation
 - Soft skills signals: leadership, communication, ownership
 
-STEP 2 — Order anchors by priority:
-1. Critical gaps (skills/experience the JD requires that are weak in CV)
-2. Key strengths to validate (important matches that need depth verification)
-3. Interesting differentiators (things that make this candidate stand out)
-4. Behavioral/soft skills (always last, unless role is primarily people-oriented)
+STEP 2 — Assign each anchor a position_in_flow and choose the opening anchor.
+
+POSITION RULES:
+- "opener": assign to 1-2 anchors that are:
+    * A recent role or project the candidate clearly owns
+    * A core skill that is definitely present in the CV AND required by JD
+      (no ambiguity — this is not the place for gap probing)
+    * Something that lets the candidate speak confidently right away
+    * NOT the most complex or impressive item — save that for core
+    * NOT a gap or missing skill — never open with a weakness
+    * A good opener often sounds like: "Tell me about your work on X"
+      where X is recent and clearly in their experience
+
+- "core": assign to the majority of anchors:
+    * Technical depth verification
+    * Critical gap probing
+    * The impressive projects (RAG pipeline, complex systems, etc.)
+    * Experience validation
+    * These go in the MIDDLE of the interview
+
+- "closer": assign to 1-2 anchors that are:
+    * Soft skills (leadership, communication, teamwork)
+    * Motivation and career fit ("why this role")
+    * Self-assessment ("what would you improve in your last project")
+    * Always at the END — candidate should leave on a human note
+
+ORDERING WITHIN EACH POSITION:
+- Within "core" anchors: order from least threatening to most threatening.
+  Start with strengths-to-validate before gap-probing.
+  Build confidence before challenging.
+
+OPENING ANCHOR SELECTION:
+After assigning positions, choose opening_anchor_id:
+- Must be an "opener" position anchor
+- Prefer the most RECENT item in the CV over the most impressive
+- If multiple openers exist, pick the one most directly tied to the
+  core daily responsibilities in the JD (not the flashiest feature)
+
+ANTI-PATTERNS — never do these:
+- Opening with the candidate's most technically complex project
+- Opening with a gap ("I notice you don't have experience in X...")
+- Opening with a soft skill question before any technical discussion
+- Assigning priority=1 automatically as the opener
+
+IMPORTANT VARIABILITY GUARD:
+The following anchor titles were used as openers in previous sessions for this candidate:
+{previously_used_openers}
+
+Do NOT select any of these as the opening_anchor_id.
+Choose a different entry point to keep the experience fresh.
+If all openers have been used, pick the least recently used one.
 
 STEP 3 — For each anchor, define:
 - opening_question: a specific question that references the actual CV content
@@ -87,7 +134,8 @@ def generate_plan_node(state: PlannerState) -> PlannerState:
                 match_report=state.get("match_report", {}),
                 interview_type=cfg.get("interview_type", "mixed"),
                 duration_minutes=cfg.get("duration", 30),
-                focus_areas=cfg.get("focus_areas", [])
+                focus_areas=cfg.get("focus_areas", []),
+                previously_used_openers=state.get("previously_used_openers", [])
             )
         )
         return {"interview_plan": result.model_dump(), "error": None}
@@ -112,7 +160,8 @@ async def run_interview_planner(
     cv_text: str,
     job_description: str | None,
     match_report: dict | None,
-    interview_config: dict
+    interview_config: dict,
+    previously_used_openers: list[str] = None
 ) -> dict:
     """
     Public entry point: run the InterviewPlanner agent.
@@ -122,7 +171,8 @@ async def run_interview_planner(
         "cv_text": cv_text,
         "job_description": job_description or "",
         "match_report": match_report,
-        "interview_config": interview_config
+        "interview_config": interview_config,
+        "previously_used_openers": previously_used_openers or []
     }
     result = await planner_app.ainvoke(initial_state)
     return result

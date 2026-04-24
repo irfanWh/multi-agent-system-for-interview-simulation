@@ -115,10 +115,17 @@ def get_next_anchor(state: InterviewerState) -> Optional[dict]:
     plan = state.get("interview_plan", {})
     anchors = plan.get("anchors", [])
     completed = state.get("completed_anchors", [])
-    for a in anchors:
-        if a["id"] not in completed:
-            return a
-    return None
+    
+    remaining = [a for a in anchors if a["id"] not in completed]
+    if not remaining:
+        return None
+        
+    position_order = {"opener": 0, "core": 1, "closer": 2}
+    remaining.sort(key=lambda a: (
+        position_order.get(a.get("position_in_flow", "core"), 1),
+        a.get("priority", 99)
+    ))
+    return remaining[0]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Nodes
@@ -127,8 +134,20 @@ def get_next_anchor(state: InterviewerState) -> Optional[dict]:
 async def open_interview_node(state: InterviewerState) -> InterviewerState:
     """Deliver opening_statement and ask first anchor's opening_question."""
     plan = state.get("interview_plan", {})
+    opening_anchor_id = plan.get("opening_anchor_id")
     
-    first_anchor = get_next_anchor(state)
+    # Try to find the explicitly chosen opening anchor
+    first_anchor = None
+    if opening_anchor_id:
+        for a in plan.get("anchors", []):
+            if a["id"] == opening_anchor_id:
+                first_anchor = a
+                break
+                
+    # Fallback if not found or not provided
+    if not first_anchor:
+        first_anchor = get_next_anchor(state)
+        
     if not first_anchor:
         return {"session_complete": True}
 

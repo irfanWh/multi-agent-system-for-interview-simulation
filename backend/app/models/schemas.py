@@ -71,12 +71,19 @@ class InterviewAnchor(BaseModel):
     red_flags: List[str]
     time_allocation_minutes: int
     priority: int
+    position_in_flow: str = Field(
+        default="core",
+        description="'opener'|'core'|'closer' — controls sequencing within the interview"
+    )
 
 class InterviewPlan(BaseModel):
     candidate_name: str
     role: str
     total_duration_minutes: int
     anchors: List[InterviewAnchor]
+    opening_anchor_id: str = Field(
+        description="ID of the anchor to open with — chosen by the planner for natural flow, NOT necessarily priority=1"
+    )
     opening_statement: str
     closing_statement: str
 

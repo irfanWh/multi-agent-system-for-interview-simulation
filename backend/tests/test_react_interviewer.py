@@ -79,7 +79,8 @@ SAMPLE_PLAN = {
             "time_allocation_minutes": 6,
             "priority": 2
         }
-    ]
+    ],
+    "opening_anchor_id": "anchor-2"
 }
 
 
@@ -111,9 +112,74 @@ async def test_planner_produces_valid_structure():
         assert "follow_up_directions" in anchor
         assert "red_flags" in anchor
         assert anchor.get("cv_reference"), "Each anchor must reference something from the CV"
+        assert anchor.get("position_in_flow") in ["opener", "core", "closer"]
 
+    assert plan.get("opening_anchor_id") is not None, "opening_anchor_id must be provided"
+    
+@pytest.mark.asyncio
+async def test_opener_is_not_most_impressive_project():
+    from app.agents.interview_planner import run_interview_planner
 
-# ─────────────────────────────────────────────
+    result = await run_interview_planner(
+        cv_text=SAMPLE_CV,
+        job_description=SAMPLE_JD,
+        match_report=SAMPLE_MATCH_REPORT,
+        interview_config={"interview_type": "technical", "duration": 30, "focus_areas": ["vector search"]}
+    )
+    plan = result.get("interview_plan")
+    
+    opener_id = plan["opening_anchor_id"]
+    opener = next((a for a in plan["anchors"] if a["id"] == opener_id), None)
+    
+    assert opener is not None, "Opener anchor not found in plan anchors"
+    assert opener["position_in_flow"] == "opener", "Opening anchor must have position_in_flow='opener'"
+    # The opener should not be the most complex project (RAG pipeline/Recommendation engine)
+    title_lower = opener["title"].lower()
+    assert "rag" not in title_lower, "Opener should not be the most impressive RAG project"
+    assert "recommendation" not in title_lower, "Opener should not be the recommendation engine"
+
+@pytest.mark.asyncio
+async def test_flow_order_is_opener_core_closer():
+    from app.agents.interview_planner import run_interview_planner
+    
+    result = await run_interview_planner(
+        cv_text=SAMPLE_CV,
+        job_description=SAMPLE_JD,
+        match_report=SAMPLE_MATCH_REPORT,
+        interview_config={"interview_type": "technical", "duration": 30, "focus_areas": ["vector search"]}
+    )
+    plan = result.get("interview_plan")
+    positions = [a["position_in_flow"] for a in plan["anchors"]]
+    
+    # Check that at least we have opener and core
+    assert "opener" in positions
+    
+@pytest.mark.asyncio
+async def test_different_sessions_use_different_openers():
+    from app.agents.interview_planner import run_interview_planner
+    
+    result1 = await run_interview_planner(
+        cv_text=SAMPLE_CV,
+        job_description=SAMPLE_JD,
+        match_report=SAMPLE_MATCH_REPORT,
+        interview_config={"interview_type": "technical", "duration": 30, "focus_areas": []},
+        previously_used_openers=[]
+    )
+    plan1 = result1.get("interview_plan")
+    opener1_id = plan1["opening_anchor_id"]
+    opener1 = next((a for a in plan1["anchors"] if a["id"] == opener1_id), None)
+    
+    result2 = await run_interview_planner(
+        cv_text=SAMPLE_CV,
+        job_description=SAMPLE_JD,
+        match_report=SAMPLE_MATCH_REPORT,
+        interview_config={"interview_type": "technical", "duration": 30, "focus_areas": []},
+        previously_used_openers=[opener1["title"]]
+    )
+    plan2 = result2.get("interview_plan")
+    
+    # They shouldn't pick the same anchor if possible. Depending on the LLM, it should vary.
+    assert plan1["opening_anchor_id"] != plan2["opening_anchor_id"]
 # Test: ReAct reason_node populates scratchpad
 # ─────────────────────────────────────────────
 

@@ -57,6 +57,25 @@ async def create_session(
     # 3. Run Agent 2 — InterviewPlanner
     from app.agents.interview_planner import run_interview_planner
     
+    # Fetch previously used openers
+    past_sessions_query = await db.execute(
+        select(Session).where(
+            Session.profile_id == profile.id,
+            Session.user_id == current_user.id
+        )
+    )
+    past_sessions = past_sessions_query.scalars().all()
+    
+    previously_used_openers = []
+    for s in past_sessions:
+        if s.session_plan and "opening_anchor_id" in s.session_plan:
+            opening_id = s.session_plan["opening_anchor_id"]
+            # find title
+            for anchor in s.session_plan.get("anchors", []):
+                if anchor.get("id") == opening_id:
+                    previously_used_openers.append(anchor.get("title"))
+                    break
+    
     plan_result = await run_interview_planner(
         cv_text=profile.cv_text,
         job_description=profile.job_description,
@@ -65,7 +84,8 @@ async def create_session(
             "interview_type": session_data.interview_type.value,
             "duration": duration_minutes,
             "focus_areas": session_data.focus_areas if hasattr(session_data, 'focus_areas') else []
-        }
+        },
+        previously_used_openers=previously_used_openers
     )
     
     if plan_result.get("error"):
