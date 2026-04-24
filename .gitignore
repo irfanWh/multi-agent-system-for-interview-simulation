@@ -55,3 +55,4 @@ models/tts/**/*.pth
 *.pid
 celerybeat-schedule
 celerybeat-schedule.db
+models/

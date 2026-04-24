@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { WS_URL } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
-import { AudioRecorder } from './components/AudioRecorder';
-import { AudioPlayer } from './components/AudioPlayer';
+import { VoiceCall } from './components/VoiceCall';
 
 interface Message {
   id: string;
@@ -18,13 +17,17 @@ interface Message {
 export default function InterviewSession() {
   const { id } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  // Start with chosen mode from query param, or prompt user
+  const initialMode = searchParams.get('mode') as 'text' | 'voice' | null;
+  const [mode, setMode] = useState<'text' | 'voice' | null>(initialMode);
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
-  const [useAudio, setUseAudio] = useState(false);
   const [currentAnchor, setCurrentAnchor] = useState<string | null>(null);
-  const [isInterviewerSpeaking, setIsInterviewerSpeaking] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -37,43 +40,41 @@ export default function InterviewSession() {
   }, [messages]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || mode !== 'text') return;
 
     const ws = new WebSocket(`${WS_URL}/session/${id}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "session_start", session_id: id, mode: "text" }));
       setIsConnected(true);
     };
 
     ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) return; // Text mode ignores binary
+      
       const data = JSON.parse(event.data);
 
-      // Update current anchor topic when server provides it
       if (data.anchor_title) {
         setCurrentAnchor(data.anchor_title);
       }
 
       if (data.type === 'transcript') {
-        setMessages(prev => [...prev, {
-          id: Date.now().toString() + Math.random(),
-          sender: 'client',
-          text: `🎤 ${data.text}`,
-          type: 'transcript'
-        }]);
-        return;
+        return; // Ignore in text mode
       }
 
       const text = data.text || data.message || '';
-      if (!text) return;
+      if (!text && data.type !== 'session_complete') return;
 
-      setMessages(prev => [...prev, {
-        id: Date.now().toString() + Math.random(),
-        sender: data.type === 'error' ? 'system' : 'server',
-        text,
-        type: data.type,
-        anchor_title: data.anchor_title
-      }]);
+      if (text) {
+        setMessages(prev => [...prev, {
+          id: Date.now().toString() + Math.random(),
+          sender: data.type === 'error' ? 'system' : 'server',
+          text,
+          type: data.type,
+          anchor_title: data.anchor_title
+        }]);
+      }
 
       if (data.type === 'session_complete') {
         setIsComplete(true);
@@ -85,42 +86,57 @@ export default function InterviewSession() {
     };
 
     return () => { ws.close(); };
-  }, [id]);
+  }, [id, mode]);
 
-  const sendMessage = (textOrEvent?: string | React.FormEvent) => {
-    let textToSend = inputValue;
+  const sendMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputValue.trim() || !wsRef.current || !isConnected) return;
 
-    if (textOrEvent && typeof textOrEvent !== 'string' && 'preventDefault' in textOrEvent) {
-      textOrEvent.preventDefault();
-    } else if (typeof textOrEvent === 'string') {
-      textToSend = textOrEvent;
-    }
-
-    if (!textToSend.trim() || !wsRef.current || !isConnected) return;
-
-    wsRef.current.send(JSON.stringify({ type: 'answer', text: textToSend }));
+    wsRef.current.send(JSON.stringify({ type: 'answer', text: inputValue }));
     setMessages(prev => [...prev, {
       id: Date.now().toString(),
       sender: 'client',
-      text: textToSend
+      text: inputValue
     }]);
     setInputValue('');
   };
 
-  const toggleMode = (newState: boolean) => {
-    setUseAudio(newState);
-    if (wsRef.current && isConnected) {
-      wsRef.current.send(JSON.stringify({ type: 'set_mode', mode: newState ? 'audio' : 'text' }));
-    }
-  };
+  if (!mode) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-slate-900 gap-8 text-white">
+        <h1 className="text-3xl font-bold">Choose Interview Mode</h1>
+        <div className="flex gap-6">
+          <Button onClick={() => setMode('voice')} className="bg-indigo-600 hover:bg-indigo-500 rounded-xl px-8 py-6 text-xl">
+            🎙️ Voice Call (Recommended)
+          </Button>
+          <Button onClick={() => setMode('text')} variant="outline" className="text-slate-300 border-slate-600 rounded-xl px-8 py-6 text-xl">
+            ⌨️ Text Chat
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
+  if (mode === 'voice') {
+    return (
+      <div className="h-screen bg-slate-900 text-slate-100">
+        <VoiceCall 
+          sessionId={id as string} 
+          wsUrl={WS_URL} 
+          onComplete={() => router.push('/profile')} 
+        />
+      </div>
+    );
+  }
+
+  // Text Mode UI
   return (
     <div className="session-page">
       {/* Header */}
       <div className="session-header">
         <div className="session-header-left">
           <div className={`connection-dot ${isConnected ? 'connected' : 'disconnected'}`} />
-          <h1 className="session-title">Live Interview</h1>
+          <h1 className="session-title">Live Interview (Text)</h1>
           {currentAnchor && !isComplete && (
             <div className="topic-pill">
               <span className="topic-label">Topic</span>
@@ -129,14 +145,6 @@ export default function InterviewSession() {
           )}
         </div>
         <div className="session-header-right">
-          <label className="mode-toggle">
-            <input
-              type="checkbox"
-              checked={useAudio}
-              onChange={(e) => toggleMode(e.target.checked)}
-            />
-            <span>{useAudio ? '🎙️ Audio' : '⌨️ Text'}</span>
-          </label>
           {isComplete && (
             <Button onClick={() => router.push('/profile')}>View Report</Button>
           )}
@@ -180,52 +188,28 @@ export default function InterviewSession() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Audio Player (Hidden visually or shows waveform) */}
-        <AudioPlayer 
-          wsRef={wsRef} 
-          isAudioMode={useAudio} 
-          onSpeakingStateChange={setIsInterviewerSpeaking} 
-        />
-
         {/* Input */}
         {!isComplete && (
           <div className="input-area">
-            <AudioRecorder
-              onSendMessage={sendMessage}
-              wsRef={wsRef}
-              isConnected={isConnected}
-              isRecordingMode={useAudio}
-              isDisabled={isInterviewerSpeaking}
-            />
-            {!useAudio && (
-              <form
-                onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-                className="text-input-form"
-              >
-                <textarea
-                  id="answer-input"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      sendMessage();
-                    }
-                  }}
-                  placeholder="Type your answer… (Enter to send, Shift+Enter for new line)"
-                  disabled={!isConnected}
-                  className="answer-textarea"
-                  rows={2}
-                />
-                <Button
-                  type="submit"
-                  id="send-answer-btn"
-                  disabled={!isConnected || !inputValue.trim()}
-                >
-                  Send →
-                </Button>
-              </form>
-            )}
+            <form onSubmit={sendMessage} className="text-input-form">
+              <textarea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                placeholder="Type your answer… (Enter to send, Shift+Enter for new line)"
+                disabled={!isConnected}
+                className="answer-textarea"
+                rows={2}
+              />
+              <Button type="submit" disabled={!isConnected || !inputValue.trim()}>
+                Send →
+              </Button>
+            </form>
           </div>
         )}
 
@@ -276,11 +260,6 @@ export default function InterviewSession() {
         }
         .topic-label { color: #818cf8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
         .topic-name { color: #c7d2fe; }
-        .mode-toggle {
-          display: flex; align-items: center; gap: 8px;
-          cursor: pointer; font-size: 14px; color: #94a3b8;
-        }
-        .mode-toggle input { cursor: pointer; }
         .chat-container {
           display: flex;
           flex-direction: column;
@@ -354,7 +333,7 @@ export default function InterviewSession() {
         .bubble-anchor-tag {
           font-size: 11px; font-weight: 600;
           color: #818cf8; text-transform: uppercase;
-          letter-spacing: 0.06em; margin-bottom: 8px;
+          margin-bottom: 8px;
         }
         .bubble-text { white-space: pre-wrap; }
         .input-area {
@@ -384,7 +363,6 @@ export default function InterviewSession() {
           line-height: 1.5;
           transition: border-color 0.2s;
         }
-        .answer-textarea::placeholder { color: #475569; }
         .answer-textarea:focus { border-color: rgba(99,102,241,0.6); }
         .complete-banner {
           display: flex;
@@ -397,7 +375,6 @@ export default function InterviewSession() {
           margin-bottom: 8px;
           font-size: 14px;
           color: #86efac;
-          gap: 16px;
           flex-shrink: 0;
         }
       `}</style>

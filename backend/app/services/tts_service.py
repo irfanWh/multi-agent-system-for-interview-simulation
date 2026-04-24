@@ -11,7 +11,7 @@ class TTSService:
     def __init__(self):
         self.tts_url = os.environ.get("TTS_URL", "http://tts:5002")
 
-    async def synthesize(self, text: str, language: str = "fr-fr") -> AsyncIterator[bytes]:
+    async def synthesize(self, text: str, language: str = "en") -> AsyncIterator[bytes]:
         """
         Stream WAV chunks from Coqui TTS server.
         """
@@ -19,7 +19,7 @@ class TTSService:
         params = {
             "text": text,
             "language_id": language,
-            "speaker_id": "default"
+            "speaker_id": "male-en-2"
         }
         
         # your_tts from Coqui uses GET /api/tts for standard server
@@ -57,8 +57,8 @@ class TTSService:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 params = {
                     "text": text,
-                    "language_id": "fr-fr",
-                    "speaker_id": "default"
+                    "language_id": "en",
+                    "speaker_id": "male-en-2"
                 }
                 url = f"{self.tts_url}/api/tts?{urllib.parse.urlencode(params)}"
                 

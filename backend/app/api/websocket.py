@@ -1,20 +1,28 @@
 import uuid
+import json
 import logging
 from typing import Dict, Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from enum import Enum
+import asyncio
 
 from app.api.deps import get_db
 from app.models.orm import Session
 from app.agents.interviewer import run_interview_graph
 from app.services.stt_service import WhisperService
 from app.services.audio_buffer import AudioBuffer
-
-import asyncio
+from app.services.tts_service import TTSService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+class SessionState(Enum):
+    WAITING_FOR_SPEECH = "waiting"
+    PROCESSING_STT = "stt"
+    AGENT_THINKING = "thinking"
+    PLAYING_TTS = "tts"
 
 @router.websocket("/session/{session_id}")
 async def interview_websocket(
@@ -36,90 +44,135 @@ async def interview_websocket(
         await websocket.close()
         return
 
+    # Wait for session init message
+    try:
+        init_message = await websocket.receive_text()
+        init_data = json.loads(init_message)
+        if init_data.get("type") != "session_start":
+            raise ValueError("Expected session_start")
+        interaction_mode = init_data.get("mode", "text")
+    except Exception as e:
+        logger.error(f"WebSocket init error: {e}")
+        await websocket.close()
+        return
+
     # Services
     whisper_service = WhisperService()
     audio_buffer = AudioBuffer()
+    tts_service = TTSService()
+    
+    # Pre-warm Whisper model so first transcription doesn't take 190s
+    if interaction_mode == "voice":
+        logger.info("Warming up Whisper model...")
+        try:
+            await whisper_service.warmup()
+            logger.info("Whisper model ready")
+        except Exception as e:
+            logger.warning(f"Whisper warmup failed (will retry on first transcription): {e}")
     
     # State tracking
-    interaction_mode = "text"
+    state = SessionState.WAITING_FOR_SPEECH
     pending_answer = None
 
-    from app.services.tts_service import TTSService
-    tts_service = TTSService()
-
     async def send_msg(msg: dict):
-        # First send the JSON message to update the UI
-        await websocket.send_json(msg)
+        """Called by Interviewer node (run_interview_graph)"""
+        nonlocal state
         
-        # If the message is a question and we're in audio mode, stream the TTS
-        if msg.get("type") == "question" and interaction_mode == "audio":
-            try:
-                await websocket.send_json({"type": "tts_start", "text": msg.get("text", "")})
-                async for chunk in tts_service.synthesize(msg.get("text", "")):
-                    await websocket.send_bytes(chunk)
-                await websocket.send_json({"type": "tts_end"})
-            except Exception as e:
-                logger.error(f"TTS streaming error: {e}")
-                await websocket.send_json({"type": "error", "message": "TTS streaming failed"})
+        # intercept specific messages to handle TTS
+        msg_type = msg.get("type")
+        
+        if msg_type == "question":
+            state = SessionState.PLAYING_TTS
+            # Send question text
+            await websocket.send_json(msg)
+            
+            if interaction_mode == "voice":
+                try:
+                    await websocket.send_json({"type": "tts_start", "text": msg.get("text", "")})
+                    async for chunk in tts_service.synthesize(msg.get("text", "")):
+                        await websocket.send_bytes(b'\x01' + chunk)
+                    await websocket.send_json({"type": "tts_end"})
+                except Exception as e:
+                    logger.error(f"TTS streaming error: {e}")
+                    # ALWAYS send tts_end so frontend unmutes mic
+                    try:
+                        await websocket.send_json({"type": "tts_end"})
+                    except:
+                        pass
+            
+            # Back to waiting for user
+            state = SessionState.WAITING_FOR_SPEECH
+            audio_buffer.reset()
+            logger.info("Now WAITING_FOR_SPEECH — mic should be active")
+            
+        elif msg_type == "anchor_change":
+            await websocket.send_json({
+                "type": "anchor_change",
+                "anchor_title": msg.get("anchor_title", ""),
+            })
+            
+        elif msg_type == "session_complete":
+            await websocket.send_json(msg)
+            
+        else:
+            # Send other messages verbatim
+            await websocket.send_json(msg)
 
     async def process_binary(data: bytes):
-        """Process incoming audio, accumulate, and transcribe on silence."""
-        nonlocal pending_answer
+        """Process incoming audio using AudioBuffer."""
+        nonlocal state, pending_answer
         
-        is_silence = whisper_service.detect_silence(data)
-        audio_buffer.add_chunk(data, is_silence)
-        
-        utterance = audio_buffer.get_complete_utterance()
+        if state != SessionState.WAITING_FOR_SPEECH:
+            return
+            
+        utterance = audio_buffer.add_chunk(data)
         if utterance:
-            # Silence detected > 500ms, transcribe
-            audio_buffer.reset()
-            transcript = await whisper_service.transcribe(utterance)
-            if transcript.strip():
-                # Yield answer to the graph
-                pending_answer = transcript.strip()
-                # Send confirmation back to client so they see their live text
-                await send_msg({"type": "transcript", "text": pending_answer})
+            logger.info(f"End-of-speech detected! Utterance size: {len(utterance)} bytes")
+            state = SessionState.PROCESSING_STT
+            
+            async def run_stt(audio_data):
+                nonlocal state, pending_answer
+                transcript = await whisper_service.transcribe(audio_data)
+                logger.info(f"STT result: '{transcript}'")
+                if transcript.strip():
+                    pending_answer = transcript.strip()
+                    await websocket.send_json({"type": "transcript", "text": pending_answer, "is_final": True})
+                    await websocket.send_json({"type": "interviewer_thinking"})
+                    state = SessionState.AGENT_THINKING
+                else:
+                    state = SessionState.WAITING_FOR_SPEECH
+                    audio_buffer.reset()
+            
+            asyncio.create_task(run_stt(utterance))
 
     async def recv_msg() -> Dict[str, Any]:
         """
         Receives messages from WebSocket.
-        If mode='audio', absorbs binary frames until an utterance is complete,
-        then returns {"type": "answer", "text": transcript}.
-        If mode='text', returns immediately.
+        Yields {"type": "answer", "text": transcript} when utterance complete.
         """
-        nonlocal interaction_mode, pending_answer
+        nonlocal state, pending_answer
         
         while True:
-            # If we already got an audio answer buffered, flush it and return
             if pending_answer is not None:
                 ans = pending_answer
                 pending_answer = None
                 return {"type": "answer", "text": ans}
 
             try:
-                # Wait for next frame
                 message = await websocket.receive()
                 
                 if "bytes" in message:
-                    if interaction_mode == "audio":
-                        # Process audio chunk
+                    if interaction_mode == "voice":
                         await process_binary(message["bytes"])
-                    else:
-                        logger.warning("Received binary but mode is text")
-                        
                 elif "text" in message:
-                    import json
                     try:
                         data = json.loads(message["text"])
-                        if data.get("type") == "set_mode":
-                            interaction_mode = data.get("mode", "text")
-                            logger.info(f"Interaction mode set to: {interaction_mode}")
-                        elif data.get("type") == "answer":
-                            if interaction_mode == "text":
-                                return {"type": "answer", "text": data.get("text", "")}
+                        if data.get("type") == "answer" and interaction_mode == "text":
+                            state = SessionState.AGENT_THINKING
+                            await websocket.send_json({"type": "interviewer_thinking"})
+                            return {"type": "answer", "text": data.get("text", "")}
                     except json.JSONDecodeError:
-                        logger.error("Invalid JSON received")
-                        
+                        pass
                 elif message["type"] == "websocket.disconnect":
                     raise WebSocketDisconnect()
 
@@ -128,9 +181,9 @@ async def interview_websocket(
                 return {"type": "disconnect"}
             except Exception as e:
                 logger.error(f"WebSocket receive error: {e}")
-                await asyncio.sleep(1) # Prevent tight CPU loop on parse fail
+                await asyncio.sleep(0.1)
 
-    # Graph loop
+    # Trigger graph
     try:
         await run_interview_graph(
             session_id=str(session_obj.id),
