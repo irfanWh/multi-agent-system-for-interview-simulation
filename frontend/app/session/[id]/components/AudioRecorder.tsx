@@ -6,17 +6,34 @@ export function AudioRecorder({
   onSendMessage,
   wsRef,
   isConnected,
-  isRecordingMode
+  isRecordingMode,
+  isDisabled = false
 }: {
   onSendMessage: (txt: string) => void;
   wsRef: React.MutableRefObject<WebSocket | null>;
   isConnected: boolean;
   isRecordingMode: boolean;
+  isDisabled?: boolean;
 }) {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      setIsRecording(false);
+    }
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (isDisabled && isRecording) {
+      stopRecording();
+    }
+  }, [isDisabled, isRecording, stopRecording]);
+
   const startRecording = useCallback(async () => {
+    if (isDisabled) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
@@ -35,17 +52,10 @@ export function AudioRecorder({
     } catch (err) {
       alert("Microphone permission denied or not available.");
     }
-  }, [wsRef, isConnected]);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-      setIsRecording(false);
-    }
-  }, [isRecording]);
+  }, [wsRef, isConnected, isDisabled]);
 
   const toggleRecording = () => {
+    if (isDisabled) return;
     if (isRecording) {
       stopRecording();
     } else {
@@ -56,7 +66,7 @@ export function AudioRecorder({
   if (!isRecordingMode) return null;
 
   return (
-    <div className="flex items-center gap-4 border p-3 rounded-md bg-slate-50">
+    <div className={`flex items-center gap-4 border p-3 rounded-md transition-colors ${isDisabled ? 'bg-slate-100 opacity-60' : 'bg-slate-50'}`}>
       <div 
         onClick={toggleRecording}
         className={`cursor-pointer flex items-center justify-center p-3 rounded-full transition-colors ${

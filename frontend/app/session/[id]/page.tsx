@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { WS_URL } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { AudioRecorder } from './components/AudioRecorder';
+import { AudioPlayer } from './components/AudioPlayer';
 
 interface Message {
   id: string;
@@ -23,6 +24,7 @@ export default function InterviewSession() {
   const [isComplete, setIsComplete] = useState(false);
   const [useAudio, setUseAudio] = useState(false);
   const [currentAnchor, setCurrentAnchor] = useState<string | null>(null);
+  const [isInterviewerSpeaking, setIsInterviewerSpeaking] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -178,6 +180,13 @@ export default function InterviewSession() {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Audio Player (Hidden visually or shows waveform) */}
+        <AudioPlayer 
+          wsRef={wsRef} 
+          isAudioMode={useAudio} 
+          onSpeakingStateChange={setIsInterviewerSpeaking} 
+        />
+
         {/* Input */}
         {!isComplete && (
           <div className="input-area">
@@ -186,6 +195,7 @@ export default function InterviewSession() {
               wsRef={wsRef}
               isConnected={isConnected}
               isRecordingMode={useAudio}
+              isDisabled={isInterviewerSpeaking}
             />
             {!useAudio && (
               <form

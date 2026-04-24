@@ -44,8 +44,23 @@ async def interview_websocket(
     interaction_mode = "text"
     pending_answer = None
 
+    from app.services.tts_service import TTSService
+    tts_service = TTSService()
+
     async def send_msg(msg: dict):
+        # First send the JSON message to update the UI
         await websocket.send_json(msg)
+        
+        # If the message is a question and we're in audio mode, stream the TTS
+        if msg.get("type") == "question" and interaction_mode == "audio":
+            try:
+                await websocket.send_json({"type": "tts_start", "text": msg.get("text", "")})
+                async for chunk in tts_service.synthesize(msg.get("text", "")):
+                    await websocket.send_bytes(chunk)
+                await websocket.send_json({"type": "tts_end"})
+            except Exception as e:
+                logger.error(f"TTS streaming error: {e}")
+                await websocket.send_json({"type": "error", "message": "TTS streaming failed"})
 
     async def process_binary(data: bytes):
         """Process incoming audio, accumulate, and transcribe on silence."""
