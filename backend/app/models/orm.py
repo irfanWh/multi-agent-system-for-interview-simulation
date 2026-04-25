@@ -9,6 +9,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy import UniqueConstraint, func
 
 from app.db.base import Base
 
@@ -43,6 +44,7 @@ class User(Base):
 
     profiles: Mapped[List["CandidateProfile"]] = relationship("CandidateProfile", back_populates="user", cascade="all, delete-orphan")
     sessions: Mapped[List["Session"]] = relationship("Session", back_populates="user", cascade="all, delete-orphan")
+    resumes: Mapped[List["Resume"]] = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email})>"
@@ -59,6 +61,7 @@ class CandidateProfile(Base):
     skills_extracted: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     match_report: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
+    migrated: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped["User"] = relationship("User", back_populates="profiles")
     sessions: Mapped[List["Session"]] = relationship("Session", back_populates="profile", cascade="all, delete-orphan")
@@ -66,12 +69,57 @@ class CandidateProfile(Base):
     def __repr__(self) -> str:
         return f"<CandidateProfile(id={self.id}, role={self.target_role}, xp={self.experience_level})>"
 
+class Resume(Base):
+    __tablename__ = "resumes"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    cv_text: Mapped[str] = mapped_column(Text, nullable=False)
+    file_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    analyzed_profile: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    is_analyzed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now)
+
+    user: Mapped["User"] = relationship("User", back_populates="resumes")
+    sessions: Mapped[List["Session"]] = relationship("Session", back_populates="resume", cascade="all, delete-orphan")
+    match_caches: Mapped[List["MatchCache"]] = relationship("MatchCache", back_populates="resume", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "file_hash"),
+    )
+    
+    def __repr__(self) -> str:
+        return f"<Resume(id={self.id}, filename={self.filename})>"
+
+class MatchCache(Base):
+    __tablename__ = "match_cache"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    resume_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="CASCADE"), index=True, nullable=False)
+    jd_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    jd_text: Mapped[str] = mapped_column(Text, nullable=False)
+    match_report: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
+
+    resume: Mapped["Resume"] = relationship("Resume", back_populates="match_caches")
+
+    __table_args__ = (
+        UniqueConstraint("resume_id", "jd_hash"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MatchCache(id={self.id}, resume={self.resume_id})>"
+
 class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("candidate_profiles.id", ondelete="SET NULL"), nullable=True)
+    resume_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="CASCADE"), index=True, nullable=False)
+    profile_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("candidate_profiles.id", ondelete="SET NULL"), nullable=True) # DEPRECATED
+    job_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     interview_type: Mapped[InterviewType] = mapped_column(Enum(InterviewType), nullable=False)
     status: Mapped[SessionStatus] = mapped_column(Enum(SessionStatus), default=SessionStatus.pending, nullable=False)
     session_plan: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
@@ -79,7 +127,8 @@ class Session(Base):
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="sessions")
-    profile: Mapped[Optional["CandidateProfile"]] = relationship("CandidateProfile", back_populates="sessions")
+    resume: Mapped["Resume"] = relationship("Resume", back_populates="sessions")
+    profile: Mapped[Optional["CandidateProfile"]] = relationship("CandidateProfile", back_populates="sessions") # DEPRECATED
     exchanges: Mapped[List["Exchange"]] = relationship("Exchange", back_populates="session", cascade="all, delete-orphan", order_by="Exchange.turn_number")
     report: Mapped[Optional["Report"]] = relationship("Report", back_populates="session", uselist=False, cascade="all, delete-orphan")
 
@@ -137,3 +186,19 @@ class Report(Base):
 
     def __repr__(self) -> str:
         return f"<Report(id={self.id}, session={self.session_id}, score={self.global_score})>"
+
+class TokenUsage(Base):
+    __tablename__ = "token_usage"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    resume_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    was_cached: Mapped[bool] = mapped_column(Boolean, default=False)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
+
+    def __repr__(self) -> str:
+        return f"<TokenUsage(op={self.operation}, tokens={self.tokens_used}, cached={self.was_cached})>"

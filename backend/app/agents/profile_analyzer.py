@@ -267,8 +267,8 @@ profile_analyzer_app = build_profile_analyzer_graph().compile()
 
 async def run_profile_analyzer(
     cv_text: str,
-    target_role: str,
-    experience_level: str,
+    target_role: str | None = None,
+    experience_level: str | None = None,
     job_description: str | None = None,
 ) -> dict:
     """
@@ -277,8 +277,8 @@ async def run_profile_analyzer(
     """
     initial_state: ProfileAnalyzerState = {
         "cv_text": cv_text,
-        "target_role": target_role,
-        "experience_level": experience_level,
+        "target_role": target_role or "General Role",
+        "experience_level": experience_level or "Unknown",
         "job_description": job_description,
     }
     result = await profile_analyzer_app.ainvoke(initial_state)

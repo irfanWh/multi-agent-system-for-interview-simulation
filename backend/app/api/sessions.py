@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api.deps import get_db, get_current_user
-from app.models.orm import Session, User, CandidateProfile
+from app.models.orm import Session, User, Resume
+from app.services.resume_service import ResumeService
 from app.models.schemas import SessionCreate, SessionResponse, SessionUpdate
 
 router = APIRouter()
@@ -22,37 +23,25 @@ async def create_session(
     Create a new interview session.
     Runs Profile Analyzer (if needed) + Orchestrator to generate SessionPlan.
     """
-    # 1. Fetch related profile
-    if not session_data.profile_id:
-        raise HTTPException(status_code=400, detail="profile_id is required")
+    # 1. Fetch related resume
+    if not session_data.resume_id:
+        raise HTTPException(status_code=400, detail="resume_id is required")
         
-    profile = await db.scalar(
-        select(CandidateProfile).where(
-            CandidateProfile.id == session_data.profile_id,
-            CandidateProfile.user_id == current_user.id
-        )
-    )
-    if not profile:
-        raise HTTPException(status_code=404, detail="Candidate profile not found")
+    resume = await db.get(Resume, str(session_data.resume_id))
+    if not resume or str(resume.user_id) != str(current_user.id):
+        raise HTTPException(status_code=404, detail="Resume not found")
         
-    # 2. Run Profile Analyzer if skills_extracted is empty
-    if not profile.skills_extracted:
-        if not profile.cv_text:
-            raise HTTPException(status_code=400, detail="Profile has no parsed CV text")
-            
-        from app.agents.profile_analyzer import run_profile_analyzer
-        result = await run_profile_analyzer(
-            cv_text=profile.cv_text,
-            target_role=profile.target_role,
-            experience_level=profile.experience_level.value,
-            job_description=profile.job_description,
+    if not resume.is_analyzed:
+        raise HTTPException(status_code=400, detail="resume_still_processing")
+        
+    match_report = None
+    if session_data.job_description:
+        match_report_dict, was_cached = await ResumeService.get_match_analysis(
+            resume_id=str(resume.id),
+            job_description=session_data.job_description,
+            db=db
         )
-        if result.get("error"):
-            raise HTTPException(status_code=500, detail=result["error"])
-            
-        profile.skills_extracted = result.get("extracted_profile", {})
-        await db.commit()
-        await db.refresh(profile)
+        match_report = match_report_dict
 
     # 3. Run Agent 2 — InterviewPlanner
     from app.agents.interview_planner import run_interview_planner
@@ -60,7 +49,7 @@ async def create_session(
     # Fetch previously used openers
     past_sessions_query = await db.execute(
         select(Session).where(
-            Session.profile_id == profile.id,
+            Session.resume_id == resume.id,
             Session.user_id == current_user.id
         )
     )
@@ -77,9 +66,9 @@ async def create_session(
                     break
     
     plan_result = await run_interview_planner(
-        cv_text=profile.cv_text,
-        job_description=profile.job_description,
-        match_report=profile.match_report,
+        cv_text=resume.cv_text,
+        job_description=session_data.job_description,
+        match_report=match_report,
         interview_config={
             "interview_type": session_data.interview_type.value,
             "duration": duration_minutes,
@@ -96,7 +85,8 @@ async def create_session(
     # 4. Save Session
     new_session = Session(
         user_id=current_user.id,
-        profile_id=profile.id,
+        resume_id=resume.id,
+        job_description=session_data.job_description,
         interview_type=session_data.interview_type,
         status=session_data.status,
         session_plan=session_plan

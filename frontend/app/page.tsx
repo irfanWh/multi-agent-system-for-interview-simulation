@@ -19,7 +19,7 @@ export default function Home() {
   const router = useRouter();
 
   if (ctx.user) {
-    router.push('/profile');
+    router.push('/session/new');
     return null;
   }
 
@@ -39,16 +39,14 @@ export default function Home() {
         
         const data = await res.json();
         ctx.login(data.access_token);
-        router.push('/profile');
+        router.push('/session/new');
       } else {
-        const res = await api.register({ email, password });
-        if (!res.ok) throw new Error('Registration failed');
-        
+        await api.register({ email, password });
         setIsLogin(true);
         setError('Account created! You can now log in.');
       }
     } catch (err: any) {
-      setError(err.message);
+      setError(err.response?.data?.detail || err.message || 'An error occurred');
     } finally {
       setLoading(false);
     }

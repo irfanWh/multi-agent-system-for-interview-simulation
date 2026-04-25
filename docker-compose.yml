@@ -321,7 +321,7 @@ services:
     container_name: local_celery_worker
     restart: unless-stopped
     working_dir: /app
-    command: sh -c "pip install --no-cache-dir -r requirements.txt && celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues=default,reports,embeddings --hostname=worker@%h"
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && celery -A app.celery_app worker --loglevel=info --concurrency=2 --queues=celery,default,reports,embeddings --hostname=worker@%h"
     volumes:
       - ./backend:/app
       - shared_tmp:/tmp/interviewai

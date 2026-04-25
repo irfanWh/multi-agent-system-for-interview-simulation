@@ -99,8 +99,8 @@ class SessionBase(BaseModel):
     ended_at: Optional[datetime] = None
 
 class SessionCreate(SessionBase):
-    user_id: UUID
-    profile_id: Optional[UUID] = None
+    resume_id: UUID
+    job_description: Optional[str] = None
     focus_areas: Optional[List[str]] = None
 
 class SessionUpdate(BaseModel):
@@ -112,7 +112,8 @@ class SessionUpdate(BaseModel):
 class SessionResponse(SessionBase):
     id: UUID
     user_id: UUID
-    profile_id: Optional[UUID] = None
+    resume_id: UUID
+    job_description: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 

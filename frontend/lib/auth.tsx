@@ -29,14 +29,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const fetchUser = async () => {
     try {
       const res = await api.getMe();
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
-      } else {
-        localStorage.removeItem('token');
+      if (res && res.data) {
+        setUser(res.data);
       }
     } catch {
-      // Ignore
+      localStorage.removeItem('token');
+      setUser(null);
     } finally {
       setLoading(false);
     }

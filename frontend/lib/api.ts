@@ -4,11 +4,15 @@ export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws'
 export async function fetchAPI(path: string, options: RequestInit = {}) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   
-  const headers = {
-    'Content-Type': 'application/json',
+  const isFormData = options.body instanceof FormData;
+  const headers: Record<string, string> = {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers,
+    ...(options.headers as any),
   };
+
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -22,16 +26,41 @@ export async function fetchAPI(path: string, options: RequestInit = {}) {
     }
   }
 
-  return response;
+  if (!response.ok) {
+    let detail = 'An error occurred';
+    try {
+      const errData = await response.json();
+      detail = errData.detail || detail;
+    } catch (e) {}
+    throw { response: { data: { detail } } };
+  }
+
+  return { data: await response.json() };
 }
 
 export const api = {
+  get: async (path: string, options?: RequestInit) => {
+    return fetchAPI(path, { ...options, method: 'GET' });
+  },
+  post: async (path: string, body?: any, options?: RequestInit) => {
+    const isFormData = body instanceof FormData;
+    return fetchAPI(path, { 
+      ...options, 
+      method: 'POST', 
+      body: isFormData ? body : JSON.stringify(body) 
+    });
+  },
   login: async (formData: FormData) => {
     // OAuth2PasswordRequestForm expects form url encoded
-    return fetch(`${API_BASE_URL}/auth/login`, {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: "POST",
       body: formData,
     });
+    if (!res.ok) {
+      throw new Error("Invalid credentials");
+    }
+    const data = await res.json();
+    return { data, ok: res.ok, json: async () => data };
   },
   
   register: async (data: any) => {
