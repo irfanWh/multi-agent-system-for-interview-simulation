@@ -104,8 +104,13 @@ class ResumeService:
         """
         Return match analysis for a (resume, JD) pair.
         Uses cache if available — no LLM call if already computed.
+        Schema version is included in the hash so stale cache entries
+        from older schema versions are automatically bypassed.
         """
-        jd_hash = hashlib.sha256(job_description.encode('utf-8')).hexdigest()
+        MATCH_SCHEMA_VERSION = "v2"  # bump when MatchReport fields change
+        jd_hash = hashlib.sha256(
+            f"{MATCH_SCHEMA_VERSION}:{job_description}".encode('utf-8')
+        ).hexdigest()
 
         # Check cache first
         result = await db.execute(

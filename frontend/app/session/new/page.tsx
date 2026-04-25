@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Loader2, FileText, CheckCircle, Clock, Upload, ArrowRight, AlertCircle, RefreshCw, Zap, Briefcase, BrainCircuit, Link as LinkIcon, BarChart3, AlertTriangle, Trash2, X } from 'lucide-react';
 import DurationPicker from '@/components/DurationPicker';
+import MatchDashboard, { MatchDashboardSkeleton } from '@/components/MatchDashboard';
 
 interface Resume {
   id: string;
@@ -405,145 +406,17 @@ export default function NewSessionPage() {
                   )}
                 </div>
                 
-                {matchReport && (
-                  <div className="mt-8 p-6 rounded-3xl bg-slate-800/40 border border-white/10 shadow-2xl animate-in fade-in slide-in-from-bottom-8 duration-700 relative overflow-hidden backdrop-blur-xl">
-                    {/* Glowing background blob */}
-                    <div className={`absolute top-[-50px] right-[-50px] w-48 h-48 rounded-full blur-[80px] opacity-20 pointer-events-none \${matchReport.global_match_score >= 80 ? 'bg-emerald-500' : matchReport.global_match_score >= 50 ? 'bg-amber-500' : 'bg-red-500'}`} />
-                    
-                    <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/5 relative z-10">
-                      <div className="flex items-center text-white font-bold text-2xl">
-                        <BarChart3 className="mr-3 h-7 w-7 text-indigo-400" /> Match Analysis Report
-                      </div>
-                      {wasCached && (
-                        <span className="flex items-center text-xs font-bold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 px-3 py-1.5 rounded-full border border-indigo-500/30">
-                          <Zap size={14} className="mr-1.5" /> Instant Cached Result
-                        </span>
-                      )}
-                    </div>
-                    
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 relative z-10">
-                      
-                      {/* Left Column: Score & Summary */}
-                      <div className="lg:col-span-4 flex flex-col items-center justify-center p-6 bg-slate-900/50 rounded-2xl border border-white/5">
-                        <div className="relative">
-                          {/* Circular Score */}
-                          <svg className="w-40 h-40 transform -rotate-90">
-                            <circle cx="80" cy="80" r="70" className="stroke-slate-800" strokeWidth="12" fill="none" />
-                            <circle 
-                              cx="80" cy="80" r="70" 
-                              className={`\${matchReport.global_match_score >= 80 ? 'stroke-emerald-500' : matchReport.global_match_score >= 50 ? 'stroke-amber-500' : 'stroke-red-500'} transition-all duration-1000 ease-out`} 
-                              strokeWidth="12" fill="none" 
-                              strokeDasharray="439.8" 
-                              strokeDashoffset={439.8 - (439.8 * matchReport.global_match_score) / 100} 
-                              strokeLinecap="round" 
-                            />
-                          </svg>
-                          <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-4xl font-black text-white">{Math.round(matchReport.global_match_score)}%</span>
-                          </div>
-                        </div>
-                        <span className="mt-4 text-sm font-bold uppercase tracking-widest text-slate-400">Overall Match</span>
-                        
-                        <div className="mt-6 w-full text-center">
-                          <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border \${
-                            matchReport.readiness_level === 'strong_match' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
-                            matchReport.readiness_level === 'good_match' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                            matchReport.readiness_level === 'partial_match' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
-                            'bg-red-500/20 text-red-400 border-red-500/30'
-                          }`}>
-                            {matchReport.readiness_level ? matchReport.readiness_level.replace('_', ' ') : 'Match Result'}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      {/* Middle Column: Domain Scores (Graphs) */}
-                      <div className="lg:col-span-8 flex flex-col justify-center">
-                        <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-5 flex items-center">
-                          <CheckCircle className="w-4 h-4 mr-2 text-indigo-400" /> Domain Competency
-                        </h4>
-                        
-                        <div className="space-y-4">
-                          {matchReport.domain_scores?.map((ds: any, idx: number) => (
-                            <div key={idx} className="bg-slate-900/30 p-3 rounded-xl border border-white/5">
-                              <div className="flex justify-between items-end mb-2">
-                                <span className="text-sm font-medium text-slate-200">{ds.domain}</span>
-                                <span className="text-xs font-bold text-slate-400">{Math.round(ds.score)}% ({ds.matched}/{ds.total} skills)</span>
-                              </div>
-                              <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full transition-all duration-1000 ease-out \${
-                                    ds.score >= 80 ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' : 
-                                    ds.score >= 50 ? 'bg-gradient-to-r from-amber-500 to-amber-400' : 
-                                    'bg-gradient-to-r from-red-500 to-red-400'
-                                  }`} 
-                                  style={{ width: `\${ds.score}%` }} 
-                                />
-                              </div>
-                            </div>
-                          ))}
-                          
-                          {/* Experience Bar */}
-                          {matchReport.experience_match && (
-                            <div className="bg-slate-900/30 p-3 rounded-xl border border-white/5 mt-4">
-                              <div className="flex justify-between items-end mb-2">
-                                <span className="text-sm font-medium text-slate-200">Experience (<span className="text-indigo-300">{matchReport.experience_match.candidate_years}</span> vs req <span className="text-slate-400">{matchReport.experience_match.required_years}</span> yrs)</span>
-                                <span className="text-xs font-bold text-slate-400">{Math.round(matchReport.experience_match.score)}%</span>
-                              </div>
-                              <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full bg-gradient-to-r from-indigo-600 to-purple-500 transition-all duration-1000 ease-out`} 
-                                  style={{ width: `\${matchReport.experience_match.score}%` }} 
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                    </div>
-                    
-                    {/* Bottom Row: Skills & Recommendation */}
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
-                      <div className="bg-emerald-500/5 rounded-2xl p-5 border border-emerald-500/10">
-                        <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-wider mb-4 flex items-center">
-                          <CheckCircle className="w-4 h-4 mr-2" /> Top Matched Skills
-                        </h4>
-                        <div className="flex flex-wrap gap-2">
-                          {matchReport.skills_matched?.slice(0, 8).map((skill: any, idx: number) => (
-                            <span key={idx} className="bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-xs px-2.5 py-1.5 rounded-lg shadow-sm">
-                              {skill.skill} <span className="opacity-50 ml-1 text-[10px]">lvl {skill.level_in_cv}</span>
-                            </span>
-                          ))}
-                          {(!matchReport.skills_matched || matchReport.skills_matched.length === 0) && (
-                            <span className="text-sm text-slate-500 italic">No direct skill matches found.</span>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="bg-amber-500/5 rounded-2xl p-5 border border-amber-500/10">
-                        <h4 className="text-sm font-bold text-amber-400 uppercase tracking-wider mb-4 flex items-center">
-                          <AlertTriangle className="w-4 h-4 mr-2" /> Missing or Critical Skills
-                        </h4>
-                        <div className="flex flex-wrap gap-2">
-                          {matchReport.skills_missing?.slice(0, 6).map((skill: any, idx: number) => (
-                            <span key={idx} className={`text-xs px-2.5 py-1.5 rounded-lg shadow-sm border \${skill.importance === 'critical' ? 'bg-red-500/10 text-red-300 border-red-500/20' : 'bg-amber-500/10 text-amber-300 border-amber-500/20'}`}>
-                              {skill.skill} {skill.importance === 'critical' && <span className="ml-1 text-red-400">*</span>}
-                            </span>
-                          ))}
-                          {(!matchReport.skills_missing || matchReport.skills_missing.length === 0) && (
-                            <span className="text-sm text-slate-500 italic">No significant missing skills.</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                {analyzingMatch && <MatchDashboardSkeleton />}
 
-                    <div className="mt-6 p-5 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 relative z-10">
-                      <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-2">AI Recommendation</h4>
-                      <p className="text-slate-200 text-sm leading-relaxed italic">
-                        "{matchReport.recommendation}"
-                      </p>
-                    </div>
-
+                {matchReport && !analyzingMatch && (
+                  <div className="mt-8">
+                    <MatchDashboard
+                      matchReport={matchReport}
+                      wasCached={wasCached}
+                      onStartInterview={(focusAreas) => {
+                        setStep(3);
+                      }}
+                    />
                   </div>
                 )}
               </div>
