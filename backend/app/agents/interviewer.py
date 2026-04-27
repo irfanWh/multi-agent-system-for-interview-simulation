@@ -293,37 +293,16 @@ async def save_exchange_node(state: InterviewerState) -> InterviewerState:
     await db.commit()
     await db.refresh(exchange)
     
-    # Async evaluation — fire and forget, does not block the interview flow
-    import asyncio
+    # Remove local evaluation and instead signal the websocket/controller to trigger the Celery task
     anchor = get_current_anchor(state)
-    
-    async def _evaluate_async():
-        try:
-            from app.agents.evaluator import evaluate_exchange
-            from app.models.orm import Evaluation
-            eval_result = await evaluate_exchange(
-                question=state.get("follow_up_question", ""),
-                candidate_answer=state.get("last_candidate_answer", ""),
-                anchor=anchor,
-                react_scratchpad=state.get("react_scratchpad", ""),
-                interviewer_confidence=3
-            )
-            if not eval_result.get("error"):
-                evaluation = Evaluation(
-                    exchange_id=exchange.id,
-                    score_accuracy=eval_result.get("dimension_scores", {}).get("accuracy", eval_result.get("score", 0)) / 10,
-                    score_depth=eval_result.get("dimension_scores", {}).get("depth", eval_result.get("score", 0)) / 10,
-                    score_clarity=eval_result.get("dimension_scores", {}).get("concrete_example", eval_result.get("score", 0)) / 10,
-                    score_star=eval_result.get("score", 0) / 10,
-                    feedback=eval_result.get("feedback", ""),
-                    improvement_tips={"tips": eval_result.get("improvement_tips", []), "gaps": eval_result.get("gaps", []), "strengths": eval_result.get("strengths", [])}
-                )
-                db.add(evaluation)
-                await db.commit()
-        except Exception as e:
-            logger.error("Async evaluation failed for exchange %s: %s", exchange.id, e)
-    
-    asyncio.create_task(_evaluate_async())
+    send_fn = state["send_fn"]
+
+    await send_fn({
+        "type": "trigger_evaluation",
+        "exchange_id": str(exchange.id),
+        "anchor": anchor,
+        "interviewer_confidence": 3
+    })
     
     ex_list = list(state.get("exchanges", []))
     ex_list.append({

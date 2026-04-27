@@ -113,5 +113,17 @@ export const api = {
 
   getExchanges: async (id: string) => {
     return fetchAPI(`/sessions/${id}/exchanges`);
+  },
+  
+  getReport: async (sessionId: string) => {
+    return fetchAPI(`/sessions/${sessionId}/report`);
+  },
+
+  generateReport: async (sessionId: string) => {
+    return fetchAPI(`/sessions/${sessionId}/generate-report`, { method: 'POST' });
+  },
+
+  getEvaluations: async (sessionId: string) => {
+    return fetchAPI(`/sessions/${sessionId}/evaluations`);
   }
 };

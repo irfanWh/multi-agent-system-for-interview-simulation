@@ -20,32 +20,32 @@ RUBRIC_WEIGHTS = {
     "project": {
         "depth": 0.40,
         "ownership": 0.30,
-        "results": 0.30,
-        "description": "Depth(40%), Ownership(30%), Results(30%)"
+        "accuracy": 0.30,
+        "description": "Depth(40%), Ownership(30%), Accuracy/Results(30%)"
     },
     "skill": {
         "accuracy": 0.50,
         "depth": 0.30,
-        "applied_context": 0.20,
-        "description": "Accuracy(50%), Depth(30%), Applied Context(20%)"
+        "clarity": 0.20,
+        "description": "Accuracy(50%), Depth(30%), Clarity(20%)"
     },
     "gap": {
-        "self_awareness": 0.40,
-        "mitigation_plan": 0.40,
-        "honesty": 0.20,
-        "description": "Self-Awareness(40%), Mitigation Plan(40%), Honesty(20%)"
+        "accuracy": 0.40,
+        "depth": 0.40,
+        "clarity": 0.20,
+        "description": "Self-Awareness/Accuracy(40%), Mitigation/Depth(40%), Honesty/Clarity(20%)"
     },
     "soft_skill": {
-        "concrete_example": 0.50,
-        "impact": 0.30,
-        "reflection": 0.20,
-        "description": "Concrete Example(50%), Impact(30%), Reflection(20%)"
+        "clarity": 0.50,
+        "depth": 0.30,
+        "star": 0.20,
+        "description": "Concrete Example/Clarity(50%), Impact/Depth(30%), STAR Structure(20%)"
     },
     "experience": {
         "depth": 0.40,
         "accuracy": 0.30,
-        "applied_context": 0.30,
-        "description": "Depth(40%), Accuracy(30%), Applied Context(30%)"
+        "clarity": 0.30,
+        "description": "Depth(40%), Accuracy(30%), Clarity(30%)"
     }
 }
 
@@ -54,12 +54,15 @@ RUBRIC_WEIGHTS = {
 # ──────────────────────────────────────────────────────────────────────────────
 
 class EvaluationResult(BaseModel):
-    score: float = Field(description="Overall score from 0.0 to 10.0")
-    dimension_scores: dict = Field(description="Breakdown by rubric dimension (0-10 each)")
-    strengths: list[str] = Field(description="2-3 specific things the candidate did well")
-    gaps: list[str] = Field(description="2-3 specific gaps or missed points")
-    feedback: str = Field(description="One paragraph of honest, constructive written feedback")
-    improvement_tips: list[str] = Field(description="3 actionable improvement suggestions")
+    chain_of_thought: str = Field(description="LLM reasoning before scoring (not shown to user)")
+    score_accuracy: float = Field(description="0-10: factual/technical correctness")
+    score_depth: float = Field(description="0-10: depth of analysis")
+    score_clarity: float = Field(description="0-10: clarity and structure of communication")
+    score_star: float = Field(description="0-10: STAR structure (0 if not behavioral/soft_skill)")
+    global_score: float = Field(description="weighted average based on anchor type")
+    feedback: str = Field(description="2-3 sentences shown to candidate immediately")
+    improvement_tips: list[str] = Field(description="2-3 actionable tips for next time")
+    strengths: list[str] = Field(description="what was done well")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Prompt
@@ -99,18 +102,22 @@ Candidate's answer:
 Apply the rubric weights for anchor type "{anchor_type}":
 {rubric_description}
 
-Score each rubric dimension from 0 to 10.
-Compute the overall weighted score (0.0 to 10.0).
+Think step-by-step (chain_of_thought):
+1. What would an expert answer look like for this? What key points are expected?
+2. Compare the candidate's answer to the ideal.
+3. Determine the scores (0-10) for accuracy, depth, clarity, and star structure.
+4. Calculate the global_score based on the rubric weights.
+5. Provide specific strengths, feedback, and improvement tips.
 
 Be very specific — quote the candidate's words when assessing.
-Do not penalize for nervousness or communication style.
+Do not penalize for nervousness.
 Do penalize for:
   - Factual inaccuracies
   - Claims not backed by evidence
   - Vague answers that avoid the question
   - Triggered red flags
 
-Provide output in the exact requested schema.
+Produce the final output perfectly following the EvaluationResult schema.
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -129,7 +136,6 @@ async def evaluate_exchange(
     Returns the full EvaluationResult as a dict, or an error dict.
     """
     try:
-        # Defaults if no anchor (backwards compatibility)
         anchor = anchor or {}
         anchor_type = anchor.get("type", "skill")
         rubric = RUBRIC_WEIGHTS.get(anchor_type, RUBRIC_WEIGHTS["skill"])
@@ -143,8 +149,8 @@ async def evaluate_exchange(
                 anchor_title=anchor.get("title", "General"),
                 anchor_type=anchor_type,
                 rubric_description=rubric.get("description", ""),
-                what_to_listen_for="\n- ".join(anchor.get("what_to_listen_for", ["Strong, specific, evidence-based answer"])),
-                red_flags="\n- ".join(anchor.get("red_flags", ["Vague generalities without examples"])),
+                what_to_listen_for="\\n- ".join(anchor.get("what_to_listen_for", ["Strong, specific, evidence-based answer"])),
+                red_flags="\\n- ".join(anchor.get("red_flags", ["Vague generalities without examples"])),
                 jd_relevance=anchor.get("jd_relevance", "Core technical competency needed for this role"),
                 react_scratchpad=react_scratchpad or "Not available",
                 interviewer_confidence=interviewer_confidence,

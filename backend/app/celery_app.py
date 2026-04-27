@@ -11,7 +11,8 @@ celery_app = Celery(
     backend=result_backend,
     include=[
         "app.tasks.resume",
-        # Add other task modules here as they are created
+        "app.tasks.evaluate",
+        "app.tasks.report",
     ]
 )
 

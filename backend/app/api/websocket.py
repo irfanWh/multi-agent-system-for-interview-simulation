@@ -111,8 +111,23 @@ async def interview_websocket(
                 "anchor_title": msg.get("anchor_title", ""),
             })
             
+        elif msg_type == "trigger_evaluation":
+            # Fire and forget the Celery task
+            from app.tasks.evaluate import evaluate_exchange_task
+            exchange_id = msg.get("exchange_id")
+            anchor = msg.get("anchor", {})
+            interviewer_confidence = msg.get("interviewer_confidence", 3)
+            if exchange_id:
+                evaluate_exchange_task.delay(exchange_id, anchor, interviewer_confidence)
+                logger.info(f"Queued evaluate_exchange_task for exchange {exchange_id}")
+            # Do NOT send this message to the client!
+            
         elif msg_type == "session_complete":
             await websocket.send_json(msg)
+            # Trigger report generation in background
+            from app.tasks.report import generate_report_task
+            generate_report_task.delay(str(session_id))
+            logger.info(f"Queued generate_report_task for session {session_id}")
             
         else:
             # Send other messages verbatim

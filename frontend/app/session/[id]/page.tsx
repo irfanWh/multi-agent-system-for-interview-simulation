@@ -123,7 +123,7 @@ export default function InterviewSession() {
         <VoiceCall 
           sessionId={id as string} 
           wsUrl={WS_URL} 
-          onComplete={() => router.push('/session/new')} 
+          onComplete={() => router.push(`/session/${id}/report`)} 
         />
       </div>
     );
@@ -146,7 +146,7 @@ export default function InterviewSession() {
         </div>
         <div className="session-header-right">
           {isComplete && (
-            <Button onClick={() => router.push('/session/new')}>View Report</Button>
+            <Button onClick={() => router.push(`/session/${id}/report`)}>View Report</Button>
           )}
         </div>
       </div>
@@ -216,7 +216,7 @@ export default function InterviewSession() {
         {isComplete && (
           <div className="complete-banner">
             <span>✅ Interview complete! Your responses have been recorded and are being evaluated.</span>
-            <Button onClick={() => router.push('/session/new')}>See Dashboard & Report</Button>
+            <Button onClick={() => router.push(`/session/${id}/report`)}>See Dashboard & Report</Button>
           </div>
         )}
       </div>
