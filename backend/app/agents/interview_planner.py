@@ -44,8 +44,11 @@ Focus Areas requested by system: {focus_areas}
 
 STEP 1 — Extract discussion anchors from the CV:
 Look for elements in the CV that are directly relevant to what the JD needs.
-For each anchor, note: what it is, why it matters for this role, and what
-you want to discover about it (depth of experience? real ownership? results?)
+
+CRITICAL RULE based on Type ({interview_type}):
+- If Type is "behavioral": Focus SOLELY on motivation, teamwork, leadership, conflict resolution, and decision-making. DO NOT ask about architecture, code, LLMs, APIs, or system design. Technical projects should only be used to ask behavioral questions (e.g., "Tell me about a challenging project you worked on").
+- If Type is "technical": Focus on technical depth, architecture, coding, and system design.
+- If Type is "mixed": Ensure a balanced mix of both behavioral and technical questions.
 
 Types of anchors to find:
 - Specific projects that relate to JD requirements
@@ -106,9 +109,11 @@ Choose a different entry point to keep the experience fresh.
 If all openers have been used, pick the least recently used one.
 
 STEP 3 — For each anchor, define:
-- opening_question: a specific question that references the actual CV content
-  GOOD: "In your CV you mention building a RAG pipeline at TechCorp — can you walk me through the architecture you chose and why?"
-  BAD:  "Tell me about your experience with vector databases."
+- opening_question: a specific question that references the actual CV content. 
+  CRITICAL: Must respect the {interview_type}.
+  TECHNICAL GOOD: "In your CV you mention building a RAG pipeline — can you walk me through the architecture you chose and why?"
+  BEHAVIORAL GOOD: "Tell me about a challenging project you worked on and what your role was."
+  BEHAVIORAL BAD: "How did you use LLMs in your project?"
 - what_to_listen_for: list of signals that indicate strong vs weak answer
 - follow_up_directions: 2-3 directions to dig depending on the answer
 - red_flags: answer patterns that suggest the claim is superficial

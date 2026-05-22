@@ -11,6 +11,10 @@ from app.models.orm import Session, User, Resume
 from app.services.resume_service import ResumeService
 from app.models.schemas import SessionCreate, SessionResponse, SessionUpdate
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -69,6 +73,8 @@ async def create_session(
                 if anchor.get("id") == opening_id:
                     previously_used_openers.append(anchor.get("title"))
                     break
+    
+    logger.info(f"Starting Session Planner with Interview Type: {session_data.interview_type.value}")
     
     plan_result = await run_interview_planner(
         cv_text=resume.cv_text,

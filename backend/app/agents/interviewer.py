@@ -4,8 +4,9 @@ import uuid
 from pydantic import BaseModel, Field
 
 from langgraph.graph import StateGraph, END
+from sqlalchemy.future import select
 from app.agents.profile_analyzer import _get_llm, _invoke_with_retries
-from app.models.orm import Exchange
+from app.models.orm import Exchange, Session
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +152,22 @@ async def open_interview_node(state: InterviewerState) -> InterviewerState:
     if not first_anchor:
         return {"session_complete": True}
 
-    opening_stmt = plan.get("opening_statement", "Welcome to the interview.")
-    first_q = first_anchor.get("opening_question", "")
+    db = state["db"]
+    session_id = state["session_id"]
     
-    msg = f"{opening_stmt}\n\n{first_q}"
+    # Query interview_type
+    session_obj = await db.scalar(select(Session).where(Session.id == session_id))
+    interview_type = session_obj.interview_type.value if session_obj else "mixed"
+    
+    opening_stmt = plan.get("opening_statement", "Welcome to the interview.")
+    
+    if interview_type == "behavioral":
+        # Force deterministic behavioral opener
+        first_q = "Hello, thank you for coming in today. To start, can you tell me about yourself, your background, and what you are currently doing?"
+        msg = first_q
+    else:
+        first_q = first_anchor.get("opening_question", "")
+        msg = f"{opening_stmt}\n\n{first_q}"
     
     send_fn = state["send_fn"]
     
@@ -225,6 +238,7 @@ async def react_reasoning_node(state: InterviewerState) -> InterviewerState:
         )
     )
     
+    
     scratchpad = (
         f"OBSERVE: {result.observe}\n"
         f"ASSESS: {result.assess}\n"
@@ -232,9 +246,32 @@ async def react_reasoning_node(state: InterviewerState) -> InterviewerState:
         f"DECISION REASONING: {result.reasoning}"
     )
 
+    # QUESTION GUARD FOR BEHAVIORAL MODE
+    db = state["db"]
+    session_id = state["session_id"]
+    session_obj = await db.scalar(select(Session).where(Session.id == session_id))
+    interview_type = session_obj.interview_type.value if session_obj else "mixed"
+    
+    follow_up_question = result.message_to_candidate
+    
+    if interview_type == "behavioral" and result.action in ["follow_up", "probe_gap"]:
+        blocked_terms = [
+            "llm", "langgraph", "api", "architecture", "backend", "frontend", "database", 
+            "model", "pipeline", "fastapi", "react", "python", "docker", "cloud", 
+            "implementation", "system design", "algorithm", "framework", "code", "infrastructure"
+        ]
+        lower_q = follow_up_question.lower()
+        has_blocked_term = any(term in lower_q for term in blocked_terms)
+        
+        if has_blocked_term:
+            logger.warning(f"Question Guard Intercepted Behavioral Question: {follow_up_question}")
+            # Rewrite it to be behavioral
+            follow_up_question = "That's interesting. What was the most challenging part of that for you personally, and how did you collaborate with others to overcome it?"
+            logger.info(f"Question Guard Rewrote to: {follow_up_question}")
+
     return {
         "next_action": result.action,
-        "follow_up_question": result.message_to_candidate,
+        "follow_up_question": follow_up_question,
         "react_scratchpad": scratchpad,
         "anchor_assessment": f"Iterative Confidence: {result.confidence}"
     }
