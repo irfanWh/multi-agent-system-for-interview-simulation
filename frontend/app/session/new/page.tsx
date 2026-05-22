@@ -15,6 +15,38 @@ interface Resume {
   sessions_count: number;
 }
 
+const validateJobDescription = (text: string) => {
+  if (!text || text.trim().length === 0) return null;
+  
+  const cleanText = text.trim();
+  const wordCount = cleanText.split(/\s+/).filter(w => w.length > 0).length;
+  
+  if (wordCount < 50 && cleanText.length < 300) {
+    return "Please enter a valid job description with responsibilities, required skills, and experience level.";
+  }
+
+  const meaningfulKeywords = [
+    'role', 'responsibilities', 'skills', 'requirements', 'experience', 
+    'qualifications', 'technologies', 'tasks', 'company', 'developer',
+    'engineer', 'manager', 'lead', 'senior', 'junior', 'degree',
+    'knowledge', 'proficiency', 'working', 'ability'
+  ];
+  
+  const textLower = cleanText.toLowerCase();
+  const hasMeaningfulTerms = meaningfulKeywords.some(kw => textLower.includes(kw));
+  
+  if (!hasMeaningfulTerms) {
+    return "Please enter a valid job description with responsibilities, required skills, and experience level.";
+  }
+  
+  if (/(.)\1{10,}/.test(cleanText)) {
+    return "Please enter a valid job description with responsibilities, required skills, and experience level. (Invalid text format)";
+  }
+
+  return null;
+};
+
+
 export default function NewSessionPage() {
   const router = useRouter();
   
@@ -36,8 +68,18 @@ export default function NewSessionPage() {
   const [inputType, setInputType] = useState<'text' | 'url'>('text');
   const [jobDescription, setJobDescription] = useState('');
   const [jobUrl, setJobUrl] = useState('');
+  const [extractingUrl, setExtractingUrl] = useState(false);
   const [matchReport, setMatchReport] = useState<any>(null);
   const [analyzingMatch, setAnalyzingMatch] = useState(false);
+
+  const validationError = inputType === 'text' && jobDescription ? validateJobDescription(jobDescription) : null;
+
+  // Clear fake stats if user edits job description and it becomes invalid
+  useEffect(() => {
+    if (validationError && matchReport) {
+      setMatchReport(null);
+    }
+  }, [jobDescription, validationError, matchReport]);
   const [wasCached, setWasCached] = useState(false);
 
   // Step 3 state
@@ -143,13 +185,13 @@ export default function NewSessionPage() {
   };
 
   const handleAnalyzeMatch = async () => {
-    const jdContent = inputType === 'url' ? `Link: ${jobUrl}` : jobDescription;
-    if (!selectedResumeId || !jdContent) return;
+    // URL flow now extracts text first, so we only analyze jobDescription text
+    if (!selectedResumeId || !jobDescription) return;
     setAnalyzingMatch(true);
     setError(null);
     try {
       const res = await api.post(`/resumes/${selectedResumeId}/match-analysis`, {
-        job_description: jdContent
+        job_description: jobDescription
       });
       setMatchReport(res.data.match_report);
       setWasCached(res.data.was_cached);
@@ -167,13 +209,12 @@ export default function NewSessionPage() {
     if (!selectedResumeId) return;
     setLoading(true);
     setError(null);
-    const jdContent = inputType === 'url' ? `Link: ${jobUrl}` : jobDescription;
     
     try {
       // Note: We use query params directly in the URL for duration_minutes
       const res = await api.post(`/sessions/?duration_minutes=${duration}`, {
         resume_id: selectedResumeId,
-        job_description: jdContent || undefined,
+        job_description: jobDescription || undefined,
         interview_type: interviewType,
       });
       
@@ -189,6 +230,27 @@ export default function NewSessionPage() {
   const isSelectedResumeReady = () => {
     const resume = resumes.find(r => r.id === selectedResumeId);
     return resume && resume.is_analyzed;
+  };
+
+  const handleExtractUrl = async () => {
+    if (!jobUrl) return;
+    setExtractingUrl(true);
+    setError(null);
+    try {
+      const res = await api.post('/tools/extract-job-url', { url: jobUrl });
+      const extractedText = res.data.extracted_text;
+      
+      // Successfully extracted: inject text and switch tabs
+      setJobDescription(`[Extracted from: ${jobUrl}]\n\n${extractedText}`);
+      setInputType('text');
+      
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const errorMsg = Array.isArray(detail) ? detail[0]?.msg : detail;
+      setError(errorMsg || 'Failed to extract job description from URL');
+    } finally {
+      setExtractingUrl(false);
+    }
   };
 
   return (
@@ -391,17 +453,37 @@ export default function NewSessionPage() {
                   ) : (
                     <div className="relative bg-slate-900/80 border border-white/10 rounded-2xl p-6">
                       <label className="block text-sm font-medium text-slate-400 mb-2">Job Posting URL</label>
-                      <div className="flex items-center">
-                        <LinkIcon className="absolute left-9 text-slate-500 w-5 h-5" />
-                        <input 
-                          type="url"
-                          placeholder="https://linkedin.com/jobs/..." 
-                          value={jobUrl}
-                          onChange={e => setJobUrl(e.target.value)}
-                          className="w-full bg-slate-800/50 border border-white/10 rounded-xl py-3 pl-12 pr-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/50 transition-colors"
-                        />
+                      <div className="flex flex-col space-y-4">
+                        <div className="flex items-center relative">
+                          <LinkIcon className="absolute left-4 text-slate-500 w-5 h-5" />
+                          <input 
+                            type="url"
+                            placeholder="https://linkedin.com/jobs/..." 
+                            value={jobUrl}
+                            onChange={e => setJobUrl(e.target.value)}
+                            className="w-full bg-slate-800/50 border border-white/10 rounded-xl py-3 pl-12 pr-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/50 transition-colors"
+                          />
+                        </div>
+                        <button 
+                          onClick={handleExtractUrl}
+                          disabled={!jobUrl || extractingUrl}
+                          className="flex items-center justify-center w-full py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-medium rounded-xl transition-all disabled:opacity-50"
+                        >
+                          {extractingUrl ? (
+                            <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Extracting Content...</>
+                          ) : (
+                            <><Zap className="mr-2 h-5 w-5" /> Extract Description</>
+                          )}
+                        </button>
                       </div>
-                      <p className="mt-3 text-xs text-slate-500 italic">We will use this link to extract the context for the interview.</p>
+                      <p className="mt-4 text-xs text-slate-500 italic text-center">We will extract the text so you can review it before analysis.</p>
+                    </div>
+                  )}
+
+                  {validationError && inputType === 'text' && (
+                    <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm flex items-start animate-in fade-in slide-in-from-top-2">
+                      <AlertCircle className="w-5 h-5 mr-3 flex-shrink-0 mt-0.5" />
+                      <p>{validationError}</p>
                     </div>
                   )}
                 </div>
@@ -446,7 +528,7 @@ export default function NewSessionPage() {
                       </button>
                       <button 
                         onClick={handleAnalyzeMatch} 
-                        disabled={(inputType === 'text' && !jobDescription) || (inputType === 'url' && !jobUrl) || analyzingMatch} 
+                        disabled={inputType === 'url' || (inputType === 'text' && (!jobDescription || validationError !== null)) || analyzingMatch} 
                         className="flex items-center justify-center px-6 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white font-medium rounded-xl transition-all shadow-[0_0_15px_rgba(99,102,241,0.3)] disabled:opacity-50 disabled:shadow-none"
                       >
                         {analyzingMatch ? (

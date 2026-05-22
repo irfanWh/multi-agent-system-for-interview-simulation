@@ -19,7 +19,7 @@ export default function Home() {
   const router = useRouter();
 
   if (ctx.user) {
-    router.push('/session/new');
+    router.push('/dashboard');
     return null;
   }
 
@@ -39,7 +39,7 @@ export default function Home() {
         
         const data = await res.json();
         ctx.login(data.access_token);
-        router.push('/session/new');
+        router.push('/dashboard');
       } else {
         await api.register({ email, password });
         setIsLogin(true);

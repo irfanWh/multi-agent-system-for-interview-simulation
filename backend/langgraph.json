@@ -1,0 +1,12 @@
+{
+  "dependencies": ["./requirements.txt"],
+  "graphs": {
+    "interviewer": "./app/agents/interviewer.py:interviewer_react_app",
+    "planner": "./app/agents/interview_planner.py:planner_app",
+    "profile_analyzer": "./app/agents/profile_analyzer.py:profile_analyzer_app",
+    "report_generator": "./app/agents/report_generator.py:report_generator_app",
+    "match_analyzer": "./app/agents/match_analyzer.py:match_analyzer_app",
+    "orchestrator": "./app/agents/orchestrator.py:orchestrator_app"
+  },
+  "env": "../.env"
+}

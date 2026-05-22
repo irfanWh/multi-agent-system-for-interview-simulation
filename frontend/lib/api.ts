@@ -125,5 +125,9 @@ export const api = {
 
   getEvaluations: async (sessionId: string) => {
     return fetchAPI(`/sessions/${sessionId}/evaluations`);
+  },
+
+  getDashboardStats: async () => {
+    return fetchAPI('/dashboard/stats');
   }
 };

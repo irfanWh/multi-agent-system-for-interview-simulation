@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api.deps import get_db, get_current_user
+from app.api.resumes import validate_job_description
 from app.models.orm import Session, User, Resume
 from app.services.resume_service import ResumeService
 from app.models.schemas import SessionCreate, SessionResponse, SessionUpdate
@@ -36,6 +37,10 @@ async def create_session(
         
     match_report = None
     if session_data.job_description:
+        validation_error = validate_job_description(session_data.job_description)
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
+            
         match_report_dict, was_cached = await ResumeService.get_match_analysis(
             resume_id=str(resume.id),
             job_description=session_data.job_description,

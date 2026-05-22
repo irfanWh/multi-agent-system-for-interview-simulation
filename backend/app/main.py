@@ -9,6 +9,8 @@ from app.api.exchanges import router as exchanges_router
 from app.api.websocket import router as websocket_router
 from app.api.evaluations import router as evaluations_router
 from app.api.reports import router as reports_router
+from app.api.dashboard import router as dashboard_router
+from app.api.tools import router as tools_router
 
 from app.services.qdrant_service import QdrantService
 
@@ -41,7 +43,9 @@ app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
 app.include_router(exchanges_router, tags=["exchanges"])
 app.include_router(evaluations_router, tags=["evaluations"])
 app.include_router(reports_router, tags=["reports"])
+app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
+app.include_router(tools_router, prefix="/tools", tags=["tools"])
 
 @app.get("/health")
 async def health_check():

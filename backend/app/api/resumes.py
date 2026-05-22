@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
@@ -151,6 +152,38 @@ async def delete_resume(
 class MatchRequest(BaseModel):
     job_description: str
 
+def validate_job_description(text: str) -> str | None:
+    if not text or not text.strip():
+        return "Job description is empty."
+        
+    clean_text = text.strip()
+        
+    word_count = len([w for w in clean_text.split() if w])
+    
+    if word_count < 50 and len(clean_text) < 300:
+        return "Please enter a valid job description with responsibilities, required skills, and experience level."
+        
+    meaningful_keywords = [
+        'role', 'responsibilities', 'skills', 'requirements', 'experience', 
+        'qualifications', 'technologies', 'tasks', 'company', 'developer',
+        'engineer', 'manager', 'lead', 'senior', 'junior', 'degree',
+        'knowledge', 'proficiency', 'working', 'ability',
+        'mission', 'profil recherché', 'compétences', 'expérience',
+        'responsabilités', "offre d'emploi", 'profil', 'requis'
+    ]
+    
+    text_lower = clean_text.lower()
+    has_meaningful = any(kw in text_lower for kw in meaningful_keywords)
+    
+    if not has_meaningful:
+        return "Please enter a valid job description with responsibilities, required skills, and experience level."
+        
+    # Repeated characters check
+    if re.search(r'(.)\1{10,}', clean_text):
+        return "Please enter a valid job description with responsibilities, required skills, and experience level. (Invalid text format)"
+        
+    return None
+
 @router.post("/{resume_id}/match-analysis")
 async def match_analysis(
     resume_id: str,
@@ -165,6 +198,10 @@ async def match_analysis(
         
     if not resume.is_analyzed:
         raise HTTPException(status_code=400, detail="Resume is still being analyzed")
+        
+    validation_error = validate_job_description(request.job_description)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
         
     try:
         report, was_cached = await ResumeService.get_match_analysis(

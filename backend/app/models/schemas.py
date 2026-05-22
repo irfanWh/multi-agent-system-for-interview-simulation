@@ -196,5 +196,26 @@ class ReportResponse(ReportBase):
     id: UUID
     session_id: UUID
     generated_at: datetime
-    
     model_config = ConfigDict(from_attributes=True)
+
+
+# ==============================================================================
+# DASHBOARD SCHEMAS
+# ==============================================================================
+class ScoreEvolution(BaseModel):
+    date: str
+    score: float
+
+class StrengthsProfile(BaseModel):
+    category: str
+    score: float
+
+class DashboardStatsResponse(BaseModel):
+    total_interviews: int
+    completed_interviews: int
+    active_interviews: int
+    active_resumes: int
+    average_score: Optional[float] = None
+    best_score: Optional[float] = None
+    score_evolution: List[ScoreEvolution]
+    strengths_profile: List[StrengthsProfile]
