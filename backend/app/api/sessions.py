@@ -91,7 +91,27 @@ async def create_session(
     if plan_result.get("error"):
         raise HTTPException(status_code=500, detail=plan_result["error"])
         
-    session_plan = plan_result.get("interview_plan")
+    planner_session_plan = plan_result.get("interview_plan")
+    
+    # 3.5 Run Agent 3 — Orchestrator (Hybrid Mode)
+    from app.agents.orchestrator import run_orchestrator
+    
+    job_profile = {
+        "calibrated_level": resume.analyzed_profile.get("experience_level", "junior") if resume.analyzed_profile else "junior",
+        "priority_domains": session_data.focus_areas or []
+    }
+    
+    logger.info("Starting Orchestrator for Hybrid Qdrant fetching")
+    orchestrator_result = await run_orchestrator(
+        planner_output=planner_session_plan,
+        job_profile=job_profile
+    )
+    
+    if orchestrator_result.get("error"):
+        logger.error(f"Orchestrator failed, falling back to planner only: {orchestrator_result['error']}")
+        session_plan = planner_session_plan
+    else:
+        session_plan = orchestrator_result.get("session_plan")
     
     # 4. Save Session
     new_session = Session(

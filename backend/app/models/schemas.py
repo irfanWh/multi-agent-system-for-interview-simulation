@@ -75,6 +75,9 @@ class InterviewAnchor(BaseModel):
         default="core",
         description="'opener'|'core'|'closer' — controls sequencing within the interview"
     )
+    reference_answer: Optional[str] = None
+    source: Optional[str] = "planner_generated"
+    evaluation_mode: Optional[str] = "llm_only"
 
 class InterviewPlan(BaseModel):
     candidate_name: str
