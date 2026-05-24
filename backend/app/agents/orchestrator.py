@@ -18,6 +18,7 @@ class PlannedQuestion(BaseModel):
     domain: str
     type: str  # technical / behavioral / system_design
     difficulty: str  # easy / medium / hard
+    reference_answer: Optional[str] = None
     evaluation_criteria: List[str] = Field(description="what the evaluator will check")
     follow_up_hints: List[str] = Field(description="relances si réponse incomplète")
 
@@ -148,6 +149,7 @@ async def fetch_questions_node(state: OrchestratorState) -> OrchestratorState:
             if chosen:
                 selected.append({
                     "question_text": chosen["question_text"],
+                    "reference_answer": chosen.get("reference_answer", ""),
                     "domain": domain,
                     "type": q_type,
                     "difficulty": level
@@ -156,6 +158,7 @@ async def fetch_questions_node(state: OrchestratorState) -> OrchestratorState:
                 # Fallback purely synthetic if Qdrant is empty
                 selected.append({
                     "question_text": f"Can you describe your experience with {domain}?",
+                    "reference_answer": "",
                     "domain": domain,
                     "type": q_type,
                     "difficulty": level
@@ -213,6 +216,7 @@ def build_rubric_node(state: OrchestratorState) -> OrchestratorState:
                 PlannedQuestion(
                     order=idx + 1,
                     question_text=q["question_text"],
+                    reference_answer=q.get("reference_answer", ""),
                     domain=q["domain"],
                     type=q["type"],
                     difficulty=q["difficulty"],

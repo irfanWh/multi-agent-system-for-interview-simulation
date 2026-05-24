@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.agents.profile_analyzer import _get_llm, _invoke_with_retries
+from app.services.qdrant_service import QdrantService
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,9 @@ Candidate's answer:
 Apply the rubric weights for anchor type "{anchor_type}":
 {rubric_description}
 
+Reference Answer (for calibration, do not penalize if wording differs, only if semantic meaning is wrong):
+{reference_answer}
+
 Think step-by-step (chain_of_thought):
 1. What would an expert answer look like for this? What key points are expected?
 2. Compare the candidate's answer to the ideal.
@@ -155,10 +159,43 @@ async def evaluate_exchange(
                 react_scratchpad=react_scratchpad or "Not available",
                 interviewer_confidence=interviewer_confidence,
                 question=question,
-                candidate_answer=candidate_answer or "(No answer provided)"
+                candidate_answer=candidate_answer or "(No answer provided)",
+                reference_answer=anchor.get("reference_answer", "Not provided")
             )
         )
         
+        # Calculate Semantic Similarity Score
+        qdrant = QdrantService.get_instance()
+        reference_answer = anchor.get("reference_answer", "")
+        similarity_score = 0.0
+        
+        if reference_answer and candidate_answer:
+            similarity = await qdrant.compute_similarity(candidate_answer, reference_answer)
+            # Map cosine similarity (0 to 1) to a 0-10 scale.
+            # Usually, good answers are > 0.7. Let's scale it so 0.4=0, 0.85=10.
+            normalized_sim = max(0.0, min(1.0, (similarity - 0.4) / 0.45))
+            similarity_score = normalized_sim * 10.0
+            logger.info(f"Similarity: {similarity:.3f} -> Score: {similarity_score:.1f}/10")
+            
+            # Hybrid Scoring (60% LLM / 40% Similarity for Accuracy)
+            original_accuracy = result.score_accuracy
+            result.score_accuracy = round((original_accuracy * 0.6) + (similarity_score * 0.4), 1)
+            
+            # Recalculate global score
+            rubric = RUBRIC_WEIGHTS.get(anchor_type, RUBRIC_WEIGHTS["skill"])
+            
+            # Safe calculation assuming missing keys are 0
+            new_global = 0.0
+            if "accuracy" in rubric: new_global += result.score_accuracy * rubric["accuracy"]
+            if "depth" in rubric: new_global += result.score_depth * rubric["depth"]
+            if "clarity" in rubric: new_global += result.score_clarity * rubric["clarity"]
+            if "ownership" in rubric: new_global += result.score_clarity * rubric["ownership"] # approximating ownership with clarity if needed
+            if "star" in rubric: new_global += result.score_star * rubric["star"]
+            
+            # Simple fallback if the weights don't sum to exactly 1
+            if new_global > 0:
+                result.global_score = round(new_global, 1)
+
         return result.model_dump()
         
     except Exception as exc:

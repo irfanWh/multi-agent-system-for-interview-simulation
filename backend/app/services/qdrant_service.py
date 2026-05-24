@@ -177,6 +177,7 @@ class QdrantService:
                     vector=vector,
                     payload={
                         "question_text": q["question_text"],
+                        "reference_answer": q.get("reference_answer", ""),
                         "domain": q["domain"],
                         "type": q["type"],
                         "level": q["level"],
@@ -186,6 +187,24 @@ class QdrantService:
             )
         self.client.upsert(collection_name="questions_bank", points=points)
         return len(points)
+
+    async def compute_similarity(self, text1: str, text2: str) -> float:
+        """Compute cosine similarity between two texts using the embedding service."""
+        import math
+        if not text1 or not text2:
+            return 0.0
+            
+        vec1 = await self.get_embedding(text1)
+        vec2 = await self.get_embedding(text2)
+        
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = math.sqrt(sum(a * a for a in vec1))
+        norm2 = math.sqrt(sum(b * b for b in vec2))
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+            
+        return dot_product / (norm1 * norm2)
 
     # ------------------------------------------------------------------
     # Candidate memories
