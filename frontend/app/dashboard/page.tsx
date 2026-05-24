@@ -15,7 +15,8 @@ import {
   ArrowRight,
   TrendingUp,
   Target,
-  Zap
+  Zap,
+  AlertCircle
 } from 'lucide-react';
 import {
   Chart as ChartJS,
@@ -61,7 +62,11 @@ interface ScoreEvolution {
 
 interface StrengthsProfile {
   category: string;
-  score: number;
+  average_score: number;
+  percentage: number;
+  level: 'strong' | 'medium' | 'weak';
+  interviews_used: number;
+  feedback_summary?: string | null;
 }
 
 interface DashboardStats {
@@ -82,6 +87,7 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -98,28 +104,35 @@ export default function DashboardPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      
-      // Fetch sessions and dashboard stats in parallel
-      const [sessionsRes, statsRes] = await Promise.all([
+      setStatsError(null);
+
+      const [sessionsResult, statsResult] = await Promise.allSettled([
         api.get('/sessions/'),
         api.getDashboardStats()
       ]);
-      
-      // API might return data directly or nested depending on pagination setup
-      const sessionData = Array.isArray(sessionsRes.data) ? sessionsRes.data : (sessionsRes.data.items || []);
-      
-      // Sort by newest first
-      const sorted = [...sessionData].sort((a, b) => {
-        const dateA = new Date(a.started_at || a.created_at).getTime();
-        const dateB = new Date(b.started_at || b.created_at).getTime();
-        return dateB - dateA;
-      });
-      
-      setSessions(sorted);
-      setStats(statsRes.data);
-      
+
+      if (sessionsResult.status === 'fulfilled') {
+        const sessionData = Array.isArray(sessionsResult.value.data)
+          ? sessionsResult.value.data
+          : (sessionsResult.value.data.items || []);
+
+        const sorted = [...sessionData].sort((a, b) => {
+          const dateA = new Date(a.started_at || a.created_at).getTime();
+          const dateB = new Date(b.started_at || b.created_at).getTime();
+          return dateB - dateA;
+        });
+
+        setSessions(sorted);
+      }
+
+      if (statsResult.status === 'fulfilled') {
+        setStats(statsResult.value.data);
+      } else {
+        setStatsError("Could not load strengths profile.");
+      }
     } catch (err) {
       console.error("Failed to fetch dashboard data", err);
+      setStatsError("Could not load strengths profile.");
     } finally {
       setLoading(false);
     }
@@ -190,7 +203,7 @@ export default function DashboardPage() {
     datasets: [
       {
         label: 'Your Profile',
-        data: stats?.strengths_profile?.map(s => s.score) || [],
+        data: stats?.strengths_profile?.map(s => s.average_score) || [],
         backgroundColor: 'rgba(168, 85, 247, 0.2)', // purple-500 w/ opacity
         borderColor: '#c084fc', // purple-400
         pointBackgroundColor: '#a855f7',
@@ -217,6 +230,12 @@ export default function DashboardPage() {
     }
   };
 
+  const levelClass = (level: StrengthsProfile['level']) => {
+    if (level === 'strong') return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+    if (level === 'medium') return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+    return 'text-red-400 bg-red-500/10 border-red-500/20';
+  };
+
   // Helper to format session date
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Unknown';
@@ -240,6 +259,12 @@ export default function DashboardPage() {
             </span>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => router.push('/recruiter')}
+              className="text-sm text-indigo-300 hover:text-indigo-200 hidden sm:block"
+            >
+              Recruiter Mode
+            </button>
             <span className="text-sm text-slate-400 hidden sm:block">{user?.email}</span>
             <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center">
               <span className="text-sm font-medium">{userName.charAt(0).toUpperCase()}</span>
@@ -338,12 +363,40 @@ export default function DashboardPage() {
               </h3>
             </div>
             <div className="h-[250px] w-full flex items-center justify-center">
-              {stats?.strengths_profile && stats.strengths_profile.length >= 3 ? (
+              {statsError ? (
+                <div className="w-full h-full flex flex-col items-center justify-center text-red-300">
+                  <AlertCircle className="w-8 h-8 mb-2 opacity-70" />
+                  <p className="text-sm text-center px-4">{statsError}</p>
+                </div>
+              ) : stats?.strengths_profile && stats.strengths_profile.length >= 3 ? (
                 <Radar data={radarChartData} options={radarChartOptions} />
+              ) : stats?.strengths_profile && stats.strengths_profile.length > 0 ? (
+                <div className="w-full space-y-4">
+                  {stats.strengths_profile.map((strength) => (
+                    <div key={strength.category}>
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <span className="text-sm font-semibold text-slate-200 truncate">{strength.category}</span>
+                        <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border ${levelClass(strength.level)}`}>
+                          {strength.level}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-slate-800/80 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-purple-400 rounded-full"
+                          style={{ width: `${Math.min(strength.percentage, 100)}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 flex justify-between text-[11px] text-slate-500">
+                        <span>{strength.average_score.toFixed(1)}/10</span>
+                        <span>{strength.interviews_used} interview{strength.interviews_used === 1 ? '' : 's'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center text-slate-500">
                   <Target className="w-8 h-8 mb-2 opacity-50" />
-                  <p className="text-sm text-center px-4">More completed interviews needed to calculate strengths</p>
+                  <p className="text-sm text-center px-4">Complete more interviews to unlock your strengths profile.</p>
                 </div>
               )}
             </div>
@@ -414,7 +467,7 @@ export default function DashboardPage() {
                               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-2" />
                               Completed
                             </span>
-                          ) : session.status === 'active' ? (
+                          ) : session.status === 'active' || session.status === 'in_progress' ? (
                             <span className="inline-flex items-center text-xs font-medium text-amber-400">
                               <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mr-2 animate-pulse" />
                               In Progress
@@ -431,7 +484,6 @@ export default function DashboardPage() {
                             <Button 
                               onClick={() => router.push(`/session/${session.id}/report`)}
                               variant="outline" 
-                              size="sm"
                               className="text-xs bg-transparent border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10 group-hover:border-indigo-500/50"
                             >
                               View Report <ArrowRight className="ml-1.5 w-3 h-3" />
@@ -439,7 +491,6 @@ export default function DashboardPage() {
                           ) : (
                             <Button 
                               onClick={() => router.push(`/session/${session.id}`)}
-                              size="sm"
                               className="text-xs bg-indigo-600 hover:bg-indigo-500"
                             >
                               Resume

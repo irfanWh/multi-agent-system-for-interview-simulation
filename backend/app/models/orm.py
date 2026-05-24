@@ -29,6 +29,9 @@ class InterviewType(str, PyEnum):
 
 class SessionStatus(str, PyEnum):
     pending = "pending"
+    scheduled = "scheduled"
+    in_progress = "in_progress"
+    expired = "expired"
     active = "active"
     completed = "completed"
     cancelled = "cancelled"
@@ -79,6 +82,7 @@ class Resume(Base):
     file_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     analyzed_profile: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     is_analyzed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_recruiter_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now)
 
@@ -87,7 +91,7 @@ class Resume(Base):
     match_caches: Mapped[List["MatchCache"]] = relationship("MatchCache", back_populates="resume", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("user_id", "file_hash"),
+        UniqueConstraint("user_id", "file_hash", "is_recruiter_candidate"),
     )
     
     def __repr__(self) -> str:
@@ -131,9 +135,37 @@ class Session(Base):
     profile: Mapped[Optional["CandidateProfile"]] = relationship("CandidateProfile", back_populates="sessions") # DEPRECATED
     exchanges: Mapped[List["Exchange"]] = relationship("Exchange", back_populates="session", cascade="all, delete-orphan", order_by="Exchange.turn_number")
     report: Mapped[Optional["Report"]] = relationship("Report", back_populates="session", uselist=False, cascade="all, delete-orphan")
+    recruiter_interview: Mapped[Optional["RecruiterInterview"]] = relationship("RecruiterInterview", back_populates="session", uselist=False)
 
     def __repr__(self) -> str:
         return f"<Session(id={self.id}, type={self.interview_type}, status={self.status})>"
+
+class RecruiterInterview(Base):
+    __tablename__ = "recruiter_interviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recruiter_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    resume_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), index=True, nullable=True)
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), unique=True, index=True, nullable=True)
+    role_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    job_description: Mapped[str] = mapped_column(Text, nullable=False)
+    interview_type: Mapped[InterviewType] = mapped_column(Enum(InterviewType), nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    code_hint: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[SessionStatus] = mapped_column(Enum(SessionStatus), default=SessionStatus.scheduled, nullable=False)
+    candidate_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    candidate_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now)
+
+    recruiter: Mapped["User"] = relationship("User")
+    resume: Mapped[Optional["Resume"]] = relationship("Resume")
+    session: Mapped[Optional["Session"]] = relationship("Session", back_populates="recruiter_interview")
+
+    def __repr__(self) -> str:
+        return f"<RecruiterInterview(id={self.id}, role={self.role_title}, status={self.status})>"
 
 class Exchange(Base):
     __tablename__ = "exchanges"

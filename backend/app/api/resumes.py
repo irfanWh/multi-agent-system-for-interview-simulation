@@ -65,7 +65,10 @@ async def list_resumes(
     query = (
         select(Resume, func.coalesce(subq.c.sessions_count, 0).label("sessions_count"))
         .outerjoin(subq, Resume.id == subq.c.resume_id)
-        .where(Resume.user_id == current_user.id)
+        .where(
+            Resume.user_id == current_user.id,
+            Resume.is_recruiter_candidate == False
+        )
         .order_by(Resume.created_at.desc())
     )
     
@@ -91,7 +94,7 @@ async def get_resume(
 ):
     """Return full resume including analyzed_profile if available."""
     resume = await db.get(Resume, resume_id)
-    if not resume or str(resume.user_id) != str(current_user.id):
+    if not resume or str(resume.user_id) != str(current_user.id) or resume.is_recruiter_candidate:
         raise HTTPException(status_code=404, detail="Resume not found")
         
     return {
@@ -110,7 +113,7 @@ async def get_resume_status(
 ):
     """Return just the analysis status for polling."""
     resume = await db.get(Resume, resume_id)
-    if not resume or str(resume.user_id) != str(current_user.id):
+    if not resume or str(resume.user_id) != str(current_user.id) or resume.is_recruiter_candidate:
         raise HTTPException(status_code=404, detail="Resume not found")
         
     return {"is_analyzed": resume.is_analyzed}
@@ -129,6 +132,12 @@ async def delete_resume(
     resume = await db.get(Resume, resume_id)
     if not resume or str(resume.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Resume not found")
+
+    if resume.is_recruiter_candidate:
+        raise HTTPException(
+            status_code=400,
+            detail="Recruiter candidate resumes cannot be deleted from the personal resume dashboard."
+        )
 
     # Count sessions that used this resume
     sessions_count_res = await db.execute(
@@ -193,7 +202,7 @@ async def match_analysis(
 ):
     """Return match analysis for a (resume, JD) pair."""
     resume = await db.get(Resume, resume_id)
-    if not resume or str(resume.user_id) != str(current_user.id):
+    if not resume or str(resume.user_id) != str(current_user.id) or resume.is_recruiter_candidate:
         raise HTTPException(status_code=404, detail="Resume not found")
         
     if not resume.is_analyzed:

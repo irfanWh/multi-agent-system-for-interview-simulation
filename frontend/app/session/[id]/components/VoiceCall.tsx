@@ -15,10 +15,11 @@ type CallState =
 interface VoiceCallProps {
   sessionId: string;
   wsUrl: string;
+  accessCode?: string;
   onComplete: () => void;
 }
 
-export function VoiceCall({ sessionId, wsUrl, onComplete }: VoiceCallProps) {
+export function VoiceCall({ sessionId, wsUrl, accessCode, onComplete }: VoiceCallProps) {
   const [callState, setCallState] = useState<CallState>("idle");
   const [transcript, setTranscript] = useState("");
   const [currentAnchor, setCurrentAnchor] = useState("");
@@ -80,7 +81,8 @@ export function VoiceCall({ sessionId, wsUrl, onComplete }: VoiceCallProps) {
       workletNodeRef.current = workletNode;
       source.connect(workletNode);
 
-      const ws = new WebSocket(`${wsUrl}/session/${sessionId}`);
+      const wsAccess = accessCode ? `?access_code=${encodeURIComponent(accessCode)}` : "";
+      const ws = new WebSocket(`${wsUrl}/session/${sessionId}${wsAccess}`);
       wsRef.current = ws;
       ws.binaryType = "arraybuffer";
 

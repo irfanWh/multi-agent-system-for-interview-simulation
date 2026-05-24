@@ -20,7 +20,7 @@ const DurationPicker: React.FC<DurationPickerProps> = ({
   const itemHeight = 48; // Each item is 48px high (h-12)
   const [internalValue, setInternalValue] = useState(value);
 
-  const options = [];
+  const options: number[] = [];
   for (let i = min; i <= max; i += step) {
     options.push(i);
   }

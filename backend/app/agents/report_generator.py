@@ -13,6 +13,7 @@ from typing import TypedDict, Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from app.agents.profile_analyzer import _get_llm, _invoke_with_retries
+from app.services.strengths_service import aggregate_competency_breakdown
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +57,13 @@ class ReportGeneratorState(TypedDict, total=False):
 def aggregate_scores_node(state: ReportGeneratorState) -> ReportGeneratorState:
     """Compute averages by domain, identify patterns, build annotations."""
     exchanges = state.get("exchanges", [])
-    
-    domain_scores: Dict[str, Dict[str, Any]] = {}
+
     exchange_annotations = []
+    total_global = 0.0
+    total_count = 0
     
     for ex in exchanges:
         ev = ex.get("evaluation") or {}
-        domain = ex.get("domain", "General")
         
         # Compute per-exchange average score
         scores = []
@@ -71,14 +72,9 @@ def aggregate_scores_node(state: ReportGeneratorState) -> ReportGeneratorState:
             if val is not None and val > 0:
                 scores.append(val)
         avg = sum(scores) / len(scores) if scores else 0.0
-        
-        # Accumulate into domain
-        if domain not in domain_scores:
-            domain_scores[domain] = {"total_score": 0.0, "count": 0, "feedbacks": []}
-        domain_scores[domain]["total_score"] += avg
-        domain_scores[domain]["count"] += 1
-        if ev.get("feedback"):
-            domain_scores[domain]["feedbacks"].append(ev["feedback"])
+        if scores:
+            total_global += avg
+            total_count += 1
         
         # Build annotation
         tips = ev.get("improvement_tips", {})
@@ -91,19 +87,7 @@ def aggregate_scores_node(state: ReportGeneratorState) -> ReportGeneratorState:
             "tips": tips.get("tips", []) if isinstance(tips, dict) else [],
         })
     
-    # Compute domain averages
-    competency_breakdown = {}
-    total_global = 0.0
-    total_count = 0
-    for domain, data in domain_scores.items():
-        avg_score = round(data["total_score"] / max(data["count"], 1), 1)
-        competency_breakdown[domain] = {
-            "score": avg_score,
-            "nb_questions": data["count"],
-            "feedback": data["feedbacks"][0] if data["feedbacks"] else "No specific feedback."
-        }
-        total_global += data["total_score"]
-        total_count += data["count"]
+    competency_breakdown = aggregate_competency_breakdown(exchanges)
     
     global_score = round(total_global / max(total_count, 1), 1)
     

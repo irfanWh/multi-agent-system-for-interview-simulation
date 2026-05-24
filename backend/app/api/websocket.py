@@ -9,11 +9,12 @@ from enum import Enum
 import asyncio
 
 from app.api.deps import get_db
-from app.models.orm import Session
+from app.models.orm import Session, RecruiterInterview, SessionStatus, get_utc_now
 from app.agents.interviewer import run_interview_graph
 from app.services.stt_service import WhisperService
 from app.services.audio_buffer import AudioBuffer
 from app.services.tts_service import TTSService
+from app.services.recruiter_interview_service import hash_access_code, utc_now
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,6 +29,7 @@ class SessionState(Enum):
 async def interview_websocket(
     websocket: WebSocket, 
     session_id: uuid.UUID, 
+    access_code: str | None = None,
     db: AsyncSession = Depends(get_db)
 ):
     await websocket.accept()
@@ -43,6 +45,31 @@ async def interview_websocket(
         await websocket.send_json({"type": "error", "message": "No session plan available."})
         await websocket.close()
         return
+
+    recruiter_interview = await db.scalar(
+        select(RecruiterInterview).where(RecruiterInterview.session_id == session_id)
+    )
+    if recruiter_interview:
+        if not access_code or recruiter_interview.code_hash != hash_access_code(access_code):
+            await websocket.send_json({"type": "error", "message": "Invalid interview access code"})
+            await websocket.close()
+            return
+        if recruiter_interview.deadline_at < utc_now():
+            recruiter_interview.status = SessionStatus.expired
+            session_obj.status = SessionStatus.expired
+            await db.commit()
+            await websocket.send_json({"type": "error", "message": "Interview code has expired"})
+            await websocket.close()
+            return
+        if recruiter_interview.status in {SessionStatus.completed, SessionStatus.expired, SessionStatus.cancelled}:
+            await websocket.send_json({"type": "error", "message": f"Interview is {recruiter_interview.status.value}"})
+            await websocket.close()
+            return
+
+        recruiter_interview.status = SessionStatus.in_progress
+        session_obj.status = SessionStatus.in_progress
+        session_obj.started_at = session_obj.started_at or get_utc_now()
+        await db.commit()
 
     # Wait for session init message
     try:
@@ -124,6 +151,11 @@ async def interview_websocket(
             
         elif msg_type == "session_complete":
             await websocket.send_json(msg)
+            session_obj.status = SessionStatus.completed
+            session_obj.ended_at = get_utc_now()
+            if recruiter_interview:
+                recruiter_interview.status = SessionStatus.completed
+            await db.commit()
             # Trigger report generation in background
             from app.tasks.report import generate_report_task
             generate_report_task.delay(str(session_id))

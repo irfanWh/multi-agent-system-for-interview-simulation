@@ -122,6 +122,70 @@ class SessionResponse(SessionBase):
 
 
 # ==============================================================================
+# RECRUITER INTERVIEW SCHEMAS
+# ==============================================================================
+class RecruiterInterviewCreate(BaseModel):
+    role_title: str = Field(min_length=2, max_length=255)
+    job_description: str = Field(min_length=50)
+    interview_type: InterviewType
+    duration_minutes: int = Field(default=30, ge=5, le=120)
+    deadline_at: datetime
+    candidate_name: str = Field(min_length=2, max_length=255)
+    candidate_email: EmailStr
+
+
+class RecruiterInterviewResponse(BaseModel):
+    id: UUID
+    role_title: str
+    job_description: str
+    interview_type: InterviewType
+    duration_minutes: int
+    deadline_at: datetime
+    status: SessionStatus
+    code_hint: str
+    access_code: Optional[str] = None
+    candidate_name: Optional[str] = None
+    candidate_email: Optional[str] = None
+    resume_id: Optional[UUID] = None
+    session_id: Optional[UUID] = None
+    report_ready: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AccessCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=32)
+
+
+class CandidateAccessResponse(BaseModel):
+    valid: bool
+    interview_id: UUID
+    role_title: str
+    interview_type: InterviewType
+    duration_minutes: int
+    deadline_at: datetime
+    status: SessionStatus
+    resume_uploaded: bool
+    resume_analyzed: bool
+    candidate_name: Optional[str] = None
+    candidate_email: Optional[EmailStr] = None
+    session_id: Optional[UUID] = None
+
+
+class CandidateStartRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=32)
+    candidate_name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    candidate_email: Optional[EmailStr] = None
+
+
+class CandidateStartResponse(BaseModel):
+    session_id: UUID
+    status: SessionStatus
+
+
+# ==============================================================================
 # EXCHANGE SCHEMAS
 # ==============================================================================
 class ExchangeBase(BaseModel):
@@ -211,7 +275,11 @@ class ScoreEvolution(BaseModel):
 
 class StrengthsProfile(BaseModel):
     category: str
-    score: float
+    average_score: float
+    percentage: float
+    level: str
+    interviews_used: int
+    feedback_summary: Optional[str] = None
 
 class DashboardStatsResponse(BaseModel):
     total_interviews: int

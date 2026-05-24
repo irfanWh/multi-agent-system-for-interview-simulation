@@ -8,8 +8,13 @@ from sqlalchemy.future import select
 from sqlalchemy import func
 
 from app.api.deps import get_db, get_current_user
-from app.models.orm import Session, User, Resume, Report, SessionStatus
+from app.models.orm import Session, User, Resume, Report, SessionStatus, Exchange, Evaluation
 from app.models.schemas import DashboardStatsResponse, ScoreEvolution, StrengthsProfile
+from app.services.strengths_service import (
+    category_scores_for_exchange,
+    clean_category_name,
+    level_for_score,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -41,7 +46,7 @@ async def get_dashboard_stats(
     active_interviews_query = await db.execute(
         select(func.count(Session.id)).where(
             Session.user_id == user_id, 
-            Session.status == SessionStatus.active
+            Session.status.in_([SessionStatus.active, SessionStatus.in_progress])
         )
     )
     active_interviews = active_interviews_query.scalar() or 0
@@ -90,44 +95,122 @@ async def get_dashboard_stats(
         score = round(row[1], 1)
         score_evolution.append(ScoreEvolution(date=date_str, score=score))
         
-    # 4. Strengths Profile (average competency scores across all reports)
+    # 4. Strengths Profile
+    # Prefer structured report categories. For older reports that only contain
+    # "General", derive categories from persisted evaluations and session anchors.
     reports_query = await db.execute(
-        select(Report.competency_breakdown)
-        .join(Session, Report.session_id == Session.id)
+        select(Session.id, Report.competency_breakdown)
+        .join(Report, Session.id == Report.session_id)
         .where(
             Session.user_id == user_id,
+            Session.status == SessionStatus.completed,
             Report.competency_breakdown.isnot(None)
         )
     )
-    
-    category_scores = {}
-    category_counts = {}
-    
+
+    category_totals: dict[str, float] = {}
+    category_counts: dict[str, int] = {}
+    category_sessions: dict[str, set[str]] = {}
+    category_feedback: dict[str, list[str]] = {}
+    sessions_with_structured_reports: set[str] = set()
+
+    def add_strength(category: str, score: float, session_id: Any, feedback: str | None = None) -> None:
+        clean_category = clean_category_name(category)
+        category_totals[clean_category] = category_totals.get(clean_category, 0.0) + float(score)
+        category_counts[clean_category] = category_counts.get(clean_category, 0) + 1
+        category_sessions.setdefault(clean_category, set()).add(str(session_id))
+        if feedback:
+            category_feedback.setdefault(clean_category, []).append(feedback)
+
     for row in reports_query.all():
-        breakdown = row[0]
+        session_id = row[0]
+        breakdown = row[1]
         if not breakdown or not isinstance(breakdown, dict):
             continue
-            
+
+        has_structured_categories = False
         for category, data in breakdown.items():
-            if isinstance(data, dict) and 'score' in data:
-                score = data['score']
-                category_scores[category] = category_scores.get(category, 0) + score
-                category_counts[category] = category_counts.get(category, 0) + 1
-    
+            if category.strip().lower() == "general":
+                continue
+            if isinstance(data, dict) and data.get("score") is not None:
+                try:
+                    score = float(data["score"])
+                except (TypeError, ValueError):
+                    continue
+                add_strength(
+                    category=category,
+                    score=max(0.0, min(10.0, score)),
+                    session_id=session_id,
+                    feedback=data.get("feedback") or data.get("insights"),
+                )
+                has_structured_categories = True
+
+        if has_structured_categories:
+            sessions_with_structured_reports.add(str(session_id))
+
+    evaluations_query = await db.execute(
+        select(
+            Session.id,
+            Session.interview_type,
+            Session.session_plan,
+            Exchange.turn_number,
+            Evaluation.score_accuracy,
+            Evaluation.score_depth,
+            Evaluation.score_clarity,
+            Evaluation.score_star,
+            Evaluation.feedback,
+        )
+        .join(Exchange, Exchange.session_id == Session.id)
+        .join(Evaluation, Evaluation.exchange_id == Exchange.id)
+        .where(
+            Session.user_id == user_id,
+            Session.status == SessionStatus.completed,
+        )
+    )
+
+    for row in evaluations_query.all():
+        session_id = str(row[0])
+        if session_id in sessions_with_structured_reports:
+            continue
+
+        session_plan = row[2] or {}
+        anchors = session_plan.get("anchors", []) if isinstance(session_plan, dict) else []
+        anchor_type = "skill"
+        anchor_idx = max((row[3] or 1) - 1, 0)
+        if anchors and anchor_idx < len(anchors):
+            anchor_type = anchors[anchor_idx].get("type", "skill")
+
+        exchange_data = {
+            "anchor_type": anchor_type,
+            "interview_type": getattr(row[1], "value", row[1]),
+            "evaluation": {
+                "score_accuracy": row[4],
+                "score_depth": row[5],
+                "score_clarity": row[6],
+                "score_star": row[7],
+                "feedback": row[8],
+            },
+        }
+
+        for category, score in category_scores_for_exchange(exchange_data).items():
+            add_strength(category, score, session_id, row[8])
+
     strengths_profile = []
-    # If no data, we could return empty array, but we might want standard categories with 0
-    # The requirement is: "If some score data is missing, return null or empty arrays, not fake values."
-    for category, total_score in category_scores.items():
+    for category, total_score in category_totals.items():
         count = category_counts[category]
         if count > 0:
             avg = total_score / count
-            # Clean up category names (e.g. "system_design" -> "System Design")
-            clean_category = category.replace("_", " ").title()
-            strengths_profile.append(StrengthsProfile(category=clean_category, score=round(avg, 1)))
-            
-    # Sort by score descending so radar chart looks nicer
-    strengths_profile.sort(key=lambda x: x.score, reverse=True)
-    # Take top 6 categories to not overcrowd the radar chart
+            feedback_items = category_feedback.get(category, [])
+            strengths_profile.append(StrengthsProfile(
+                category=category,
+                average_score=round(avg, 1),
+                percentage=round(avg * 10, 1),
+                level=level_for_score(avg),
+                interviews_used=len(category_sessions.get(category, set())),
+                feedback_summary=feedback_items[0] if feedback_items else None,
+            ))
+
+    strengths_profile.sort(key=lambda x: x.average_score, reverse=True)
     strengths_profile = strengths_profile[:6]
     
     return DashboardStatsResponse(

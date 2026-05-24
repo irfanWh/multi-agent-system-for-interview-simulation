@@ -55,7 +55,7 @@ async def _generate_report_async(session_id: str) -> None:
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from sqlalchemy.future import select
     from sqlalchemy.orm import selectinload
-    from app.models.orm import Session, Exchange, Evaluation, Report, SessionStatus
+    from app.models.orm import Session, Exchange, Evaluation, Report, SessionStatus, RecruiterInterview
     from app.agents.report_generator import run_report_generator
     from app.services.pdf_service import generate_report_pdf
 
@@ -125,6 +125,7 @@ async def _generate_report_async(session_id: str) -> None:
                     "evaluation": ev_dict,
                     "domain": domain,
                     "anchor_type": anchor_type,
+                    "interview_type": getattr(session_obj.interview_type, "value", session_obj.interview_type),
                 })
 
             logger.info(f"Running report generator for session {session_id} with {len(exchange_dicts)} exchanges")
@@ -185,6 +186,11 @@ async def _generate_report_async(session_id: str) -> None:
 
             # Update session status to completed
             session_obj.status = SessionStatus.completed
+            recruiter_interview = await db.scalar(
+                select(RecruiterInterview).where(RecruiterInterview.session_id == session_obj.id)
+            )
+            if recruiter_interview:
+                recruiter_interview.status = SessionStatus.completed
             await db.commit()
             logger.info(f"Report saved for session {session_id} — status set to completed")
 

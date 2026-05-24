@@ -129,5 +129,50 @@ export const api = {
 
   getDashboardStats: async () => {
     return fetchAPI('/dashboard/stats');
+  },
+
+  getRecruiterSessions: async () => {
+    return fetchAPI('/recruiter/sessions');
+  },
+
+  createRecruiterSession: async (data: any) => {
+    return fetchAPI('/recruiter/sessions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  regenerateRecruiterCode: async (interviewId: string) => {
+    return fetchAPI(`/recruiter/sessions/${interviewId}/regenerate-code`, { method: 'POST' });
+  },
+
+  getRecruiterReport: async (interviewId: string) => {
+    return fetchAPI(`/recruiter/sessions/${interviewId}/report`);
+  },
+
+  validateCandidateCode: async (code: string) => {
+    return fetchAPI('/candidate-access/validate', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  },
+
+  uploadCandidateResume: async (code: string, file: File, candidateName?: string, candidateEmail?: string) => {
+    const formData = new FormData();
+    formData.append('code', code);
+    formData.append('file', file);
+    if (candidateName) formData.append('candidate_name', candidateName);
+    if (candidateEmail) formData.append('candidate_email', candidateEmail);
+    return fetchAPI('/candidate-access/upload-resume', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+
+  startCandidateInterview: async (code: string, candidateName?: string, candidateEmail?: string) => {
+    return fetchAPI('/candidate-access/start', {
+      method: 'POST',
+      body: JSON.stringify({ code, candidate_name: candidateName, candidate_email: candidateEmail }),
+    });
   }
 };

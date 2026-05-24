@@ -10,15 +10,25 @@ from sqlalchemy.future import select
 import uuid
 import json
 
-from app.api.deps import get_db
-from app.models.orm import Report, Session, SessionStatus
+from app.api.deps import get_db, get_current_user
+from app.models.orm import Report, Session, SessionStatus, User
 
 router = APIRouter()
 
 
 @router.get("/sessions/{session_id}/report")
-async def get_session_report(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_session_report(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Return the report data and PDF URL for a session."""
+    session = await db.scalar(
+        select(Session).where(Session.id == session_id, Session.user_id == current_user.id)
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     report = await db.scalar(
         select(Report).where(Report.session_id == session_id)
     )
@@ -45,11 +55,15 @@ async def get_session_report(session_id: uuid.UUID, db: AsyncSession = Depends(g
 
 
 @router.post("/sessions/{session_id}/generate-report")
-async def trigger_report_generation(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def trigger_report_generation(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Trigger report generation as a Celery background task."""
     # Check session exists
     session_obj = await db.scalar(
-        select(Session).where(Session.id == session_id)
+        select(Session).where(Session.id == session_id, Session.user_id == current_user.id)
     )
     if not session_obj:
         raise HTTPException(status_code=404, detail="Session not found")

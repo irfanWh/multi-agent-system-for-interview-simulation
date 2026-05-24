@@ -11,6 +11,8 @@ from app.api.evaluations import router as evaluations_router
 from app.api.reports import router as reports_router
 from app.api.dashboard import router as dashboard_router
 from app.api.tools import router as tools_router
+from app.api.recruiter import router as recruiter_router
+from app.api.candidate_access import router as candidate_access_router
 
 from app.services.qdrant_service import QdrantService
 
@@ -46,6 +48,8 @@ app.include_router(reports_router, tags=["reports"])
 app.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 app.include_router(tools_router, prefix="/tools", tags=["tools"])
+app.include_router(recruiter_router)
+app.include_router(candidate_access_router)
 
 @app.get("/health")
 async def health_check():

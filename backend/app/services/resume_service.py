@@ -42,7 +42,8 @@ class ResumeService:
         user_id: str,
         file_bytes: bytes,
         filename: str,
-        db: AsyncSession
+        db: AsyncSession,
+        is_recruiter_candidate: bool = False,
     ) -> Tuple[Resume, bool]:
         """
         Upload a new resume. If exact same file was already uploaded
@@ -54,7 +55,8 @@ class ResumeService:
         result = await db.execute(
             select(Resume).where(
                 Resume.user_id == user_id,
-                Resume.file_hash == file_hash
+                Resume.file_hash == file_hash,
+                Resume.is_recruiter_candidate == is_recruiter_candidate,
             )
         )
         existing_resume = result.scalar_one_or_none()
@@ -74,7 +76,8 @@ class ResumeService:
             filename=filename,
             cv_text=cv_text,
             file_hash=file_hash,
-            is_analyzed=False
+            is_analyzed=False,
+            is_recruiter_candidate=is_recruiter_candidate,
         )
         db.add(resume)
         await db.commit()

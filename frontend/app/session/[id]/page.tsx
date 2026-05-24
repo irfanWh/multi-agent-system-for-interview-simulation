@@ -21,6 +21,7 @@ export default function InterviewSession() {
   
   // Start with chosen mode from query param, or prompt user
   const initialMode = searchParams.get('mode') as 'text' | 'voice' | null;
+  const accessCode = searchParams.get('access_code') || (typeof window !== 'undefined' ? sessionStorage.getItem(`access_code:${id}`) : null);
   const [mode, setMode] = useState<'text' | 'voice' | null>(initialMode);
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -42,7 +43,8 @@ export default function InterviewSession() {
   useEffect(() => {
     if (!id || mode !== 'text') return;
 
-    const ws = new WebSocket(`${WS_URL}/session/${id}`);
+    const wsAccess = accessCode ? `?access_code=${encodeURIComponent(accessCode)}` : '';
+    const ws = new WebSocket(`${WS_URL}/session/${id}${wsAccess}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -86,7 +88,7 @@ export default function InterviewSession() {
     };
 
     return () => { ws.close(); };
-  }, [id, mode]);
+  }, [id, mode, accessCode]);
 
   const sendMessage = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -123,6 +125,7 @@ export default function InterviewSession() {
         <VoiceCall 
           sessionId={id as string} 
           wsUrl={WS_URL} 
+          accessCode={accessCode || undefined}
           onComplete={() => router.push(`/session/${id}/report`)} 
         />
       </div>
