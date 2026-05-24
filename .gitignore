@@ -56,3 +56,11 @@ models/tts/**/*.pth
 celerybeat-schedule
 celerybeat-schedule.db
 models/
+
+# --- Codex/project context docs ---
+AGENTS.md
+API.md
+CODEX_RULES.md
+CONTEXT.md
+DATABASE.md
+FRONTEND.md
