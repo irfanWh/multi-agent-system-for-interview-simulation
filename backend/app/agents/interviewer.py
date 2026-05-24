@@ -90,8 +90,9 @@ DECIDE — choose ONE action:
 
   C) "acknowledge_move" — you have enough signal on this anchor
      (either strong positive or confirmed gap). Acknowledge their answer
-     naturally and transition to the next anchor's opening_question.
-     The transition must feel conversational, not abrupt.
+     naturally and state that we are moving to the next topic. 
+     CRITICAL: Do NOT ask any questions in your message_to_candidate for this action! 
+     The system will automatically append the next question for you.
 
   D) "close" — all anchors covered OR time is up. Deliver closing_statement.
 
@@ -159,15 +160,16 @@ async def open_interview_node(state: InterviewerState) -> InterviewerState:
     session_obj = await db.scalar(select(Session).where(Session.id == session_id))
     interview_type = session_obj.interview_type.value if session_obj else "mixed"
     
-    opening_stmt = plan.get("opening_statement", "Welcome to the interview.")
+    candidate_name = plan.get("candidate_name", "")
+    generic_greeting = f"Hello {candidate_name}, welcome to the interview!" if candidate_name else "Hello, welcome to the interview!"
     
     if interview_type == "behavioral":
         # Force deterministic behavioral opener
-        first_q = "Hello, thank you for coming in today. To start, can you tell me about yourself, your background, and what you are currently doing?"
-        msg = first_q
+        first_q = "To start, can you tell me about yourself, your background, and what you are currently doing?"
+        msg = f"{generic_greeting}\n\n{first_q}"
     else:
         first_q = first_anchor.get("opening_question", "")
-        msg = f"{opening_stmt}\n\n{first_q}"
+        msg = f"{generic_greeting}\n\n{first_q}"
     
     send_fn = state["send_fn"]
     
